@@ -82,8 +82,31 @@ def load_sales() -> pd.DataFrame:
     if "Qty" in df.columns and "qty" not in df.columns: ren["Qty"]="qty"
     if "Subtotal" in df.columns and "subtotal" not in df.columns: ren["Subtotal"]="subtotal"
     df=df.rename(columns=ren)
-    if "sku" in df.columns: df["sku"]=df["sku"].astype(str).str.strip()
-    df["date"]=pd.to_datetime(df["date"])
+    # --- robust column detection: map real names -> canonical names ---
+    def find(cols, *cands):
+        low={c.lower().strip():c for c in cols}
+        for cand in cands:
+            if cand in low: return low[cand]
+        return None
+    ren={}
+    rev=find(df.columns,"subtotal","revenue","sales","amount","gmv","net_sales")
+    qty=find(df.columns,"qty","quantity","units","qty_sold")
+    sku=find(df.columns,"sku","sku_code","skucode")
+    chan=find(df.columns,"marketplaces","marketplace","channel","platform")
+    if rev and rev!="subtotal": ren[rev]="subtotal"
+    if qty and qty!="qty": ren[qty]="qty"
+    if sku and sku!="sku": ren[sku]="sku"
+    if chan and chan!="marketplaces": ren[chan]="marketplaces"
+    df=df.rename(columns=ren)
+    # guarantee the canonical columns exist (so queries never crash)
+    if "subtotal" not in df.columns: df["subtotal"]=0.0
+    if "qty" not in df.columns: df["qty"]=0
+    if "sku" not in df.columns: df["sku"]=""
+    if "marketplaces" not in df.columns: df["marketplaces"]="Unknown"
+    df["sku"]=df["sku"].astype(str).str.strip()
+    df["subtotal"]=pd.to_numeric(df["subtotal"], errors="coerce").fillna(0.0)
+    df["qty"]=pd.to_numeric(df["qty"], errors="coerce").fillna(0)
+    df["date"]=pd.to_datetime(df["date"], errors="coerce")
     if "mon" not in df.columns: df["mon"]=df["date"].dt.month
     if "yr" not in df.columns: df["yr"]=df["date"].dt.year
     return df
@@ -92,14 +115,18 @@ def load_sales() -> pd.DataFrame:
 @st.cache_data(ttl=3600)
 def load_master() -> pd.DataFrame:
     if MASTER_SHEET_ID:
-        import gspread
-        from google.oauth2 import service_account
-        info=dict(st.secrets["gcp_service_account"])
-        creds=service_account.Credentials.from_service_account_info(
-            info, scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"])
-        gc=gspread.authorize(creds)
-        ws=gc.open_by_key(MASTER_SHEET_ID).worksheet(MASTER_SHEET_TAB)
-        df=pd.DataFrame(ws.get_all_records())
+        try:
+            import gspread
+            from google.oauth2 import service_account
+            info=dict(st.secrets["gcp_service_account"])
+            creds=service_account.Credentials.from_service_account_info(
+                info, scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"])
+            gc=gspread.authorize(creds)
+            ws=gc.open_by_key(MASTER_SHEET_ID).worksheet(MASTER_SHEET_TAB)
+            df=pd.DataFrame(ws.get_all_records())
+        except Exception as e:
+            st.session_state["_master_error"]=str(e)[:300]
+            return pd.DataFrame()
     else:
         if not MASTER_LOCAL.exists(): return pd.DataFrame()
         df=pd.read_csv(MASTER_LOCAL)
@@ -239,7 +266,13 @@ st.caption(f"{mlab} · {start} → {end}"+(" · "+" · ".join(active) if active 
 
 matched=jdf["_matched"].mean()*100 if "_matched" in jdf.columns else 0
 if not CAT:
-    st.info("No master attributes loaded yet — connect the master sheet (MASTER_SHEET_ID) to unlock product filters. Showing sales-only views.")
+    merr=st.session_state.get("_master_error","")
+    if merr and ("PermissionError" in merr or "permission" in merr.lower() or "403" in merr):
+        st.info("Master sheet not yet accessible — the Google Sheet still needs to be shared (Viewer) with the service account email. Showing sales-only views until then.")
+    elif merr:
+        st.info(f"Master sheet could not be read ({merr}). Showing sales-only views.")
+    else:
+        st.info("No master attributes loaded yet — connect the master sheet (MASTER_SHEET_ID) to unlock product filters. Showing sales-only views.")
 elif matched<99:
     st.warning(f"SKU match rate to master: {matched:.1f}%. Unmatched rows still count in totals but carry no attributes.")
 
