@@ -27,7 +27,79 @@ HERE = Path(__file__).parent
 SALES_LOCAL = HERE / "sales.parquet"
 MASTER_LOCAL = HERE / "master.csv"
 
-st.set_page_config(page_title="D2C Sales Dashboard", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="D2C Sales Dashboard", layout="wide",
+                   initial_sidebar_state="expanded", page_icon="📊")
+
+# ---------- Theme / styling ----------
+st.markdown('''
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Outfit:wght@300;400;500;600;700&display=swap');
+
+:root{
+  --bg:#0f1117; --panel:#171a23; --panel2:#1d212c; --line:#2a2f3d;
+  --ink:#e8eaf0; --muted:#9aa0b0; --accent:#5b8def; --accent2:#3ddc97;
+  --warn:#f5a623;
+}
+html, body, [class*="css"], .stApp{ font-family:'Outfit',sans-serif; }
+.stApp{ background:radial-gradient(1200px 600px at 20% -10%, #1a1f2e 0%, var(--bg) 55%); color:var(--ink); }
+
+/* Title */
+h1{ font-family:'Fraunces',serif !important; font-weight:600 !important;
+    letter-spacing:-0.5px; font-size:2.5rem !important;
+    background:linear-gradient(90deg,#fff 0%,#aebbff 100%);
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+h2,h3{ font-family:'Outfit',sans-serif !important; font-weight:600 !important; color:var(--ink); }
+
+/* Sidebar */
+section[data-testid="stSidebar"]{ background:var(--panel); border-right:1px solid var(--line); }
+section[data-testid="stSidebar"] .stMarkdown h1,
+section[data-testid="stSidebar"] h1{ font-size:1.3rem !important; }
+
+/* KPI metric cards */
+div[data-testid="stMetric"]{
+  background:linear-gradient(160deg,var(--panel2) 0%,var(--panel) 100%);
+  border:1px solid var(--line); border-radius:16px; padding:18px 20px;
+  box-shadow:0 6px 20px rgba(0,0,0,.25); transition:transform .15s ease, border-color .15s;
+}
+div[data-testid="stMetric"]:hover{ transform:translateY(-3px); border-color:var(--accent); }
+div[data-testid="stMetricLabel"]{ color:var(--muted) !important; font-size:.8rem !important;
+  text-transform:uppercase; letter-spacing:1px; }
+div[data-testid="stMetricValue"]{ font-family:'Fraunces',serif !important;
+  font-weight:600 !important; color:#fff !important; }
+
+/* Tabs */
+button[data-baseweb="tab"]{ font-weight:500; color:var(--muted); }
+button[data-baseweb="tab"][aria-selected="true"]{ color:var(--accent) !important; }
+div[data-baseweb="tab-highlight"]{ background:var(--accent) !important; }
+
+/* Inputs */
+.stMultiSelect div[data-baseweb="select"]>div, .stDateInput input{
+  background:var(--panel2); border-color:var(--line); border-radius:10px; }
+div[data-baseweb="tag"]{ background:var(--accent) !important; border-radius:8px; }
+
+/* Caption */
+.stCaption, div[data-testid="stCaptionContainer"]{ color:var(--muted) !important; }
+
+/* Divider */
+hr{ border-color:var(--line); }
+</style>
+''', unsafe_allow_html=True)
+
+# Plotly theme applied per-chart via a helper
+PLOT_BG="rgba(0,0,0,0)"
+PALETTE=["#5b8def","#3ddc97","#f5a623","#e15b97","#a78bfa","#4dd0e1","#ff8a65","#9ccc65"]
+def style_fig(fig):
+    fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
+                      font=dict(color="#c7ccdb", family="Outfit"),
+                      colorway=PALETTE, margin=dict(t=50,l=10,r=10,b=10),
+                      legend=dict(bgcolor="rgba(0,0,0,0)"))
+    fig.update_xaxes(gridcolor="#222734", zerolinecolor="#222734")
+    fig.update_yaxes(gridcolor="#222734", zerolinecolor="#222734")
+    return fig
+
+def plot(fig, **kw):
+    import streamlit as _st
+    return _st.plotly_chart(style_fig(fig), **kw)
 
 # ---------- password ----------
 def check_password():
@@ -179,6 +251,15 @@ def setup():
 try:
     CAT,NUM,LABEL,MATCH = setup()
     con=get_db()
+    # Promote product name & colour to filters even though they're high-cardinality labels
+    def _promote(cands):
+        for lc_target in cands:
+            for c in list(LABEL):
+                if lc_target in c.lower():
+                    if c not in CAT: CAT.insert(0, c)
+                    return
+    _promote(["product_name","product name","name"])
+    _promote(["colour","color"])
 except Exception:
     st.title("Data load error"); st.error("Failed while preparing data:")
     st.code(traceback.format_exc())
@@ -265,11 +346,11 @@ with T["📈 Trend"]:
     g=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="g")
     tr={"Daily":"day","Weekly":"week","Monthly":"month"}[g]
     df=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
-    st.plotly_chart(px.area(df,x="period",y="v",title=f"{g} {mlab}").update_layout(height=420,yaxis_title=mlab,xaxis_title=None),use_container_width=True)
+    plot(px.area(df,x="period",y="v",title=f"{g} {mlab}").update_layout(height=420,yaxis_title=mlab,xaxis_title=None),use_container_width=True)
 
 with T["🛒 Channel"]:
     df=Q(f"SELECT date_trunc('month',date) period,marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1")
-    st.plotly_chart(px.line(df,x="period",y="v",color="marketplaces",markers=True,title=f"Monthly {mlab} by Channel").update_layout(height=420),use_container_width=True)
+    plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,title=f"Monthly {mlab} by Channel").update_layout(height=420),use_container_width=True)
     sh=Q(f"SELECT marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 2 DESC")
     a,b=st.columns(2)
     a.plotly_chart(px.pie(sh,names="marketplaces",values="v",hole=0.45,title="Channel Share"),use_container_width=True)
@@ -279,21 +360,21 @@ if CAT:
     with T["🧩 By Attribute"]:
         dim=st.selectbox("Break down by",CAT)
         df=Q(f'SELECT "{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1 ORDER BY 2 DESC')
-        st.plotly_chart(px.bar(df,x="v",y="k",orientation="h",text_auto=".2s",title=f"{mlab} by {dim}").update_layout(height=max(400,len(df)*26),yaxis=dict(categoryorder="total ascending"),yaxis_title=None,xaxis_title=mlab),use_container_width=True)
+        plot(px.bar(df,x="v",y="k",orientation="h",text_auto=".2s",title=f"{mlab} by {dim}").update_layout(height=max(400,len(df)*26),yaxis=dict(categoryorder="total ascending"),yaxis_title=None,xaxis_title=mlab),use_container_width=True)
         trd=Q(f'SELECT date_trunc(\'month\',date) period,"{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1,2 ORDER BY 1')
-        st.plotly_chart(px.line(trd,x="period",y="v",color="k",markers=True,title=f"Monthly {mlab} by {dim}").update_layout(height=420),use_container_width=True)
+        plot(px.line(trd,x="period",y="v",color="k",markers=True,title=f"Monthly {mlab} by {dim}").update_layout(height=420),use_container_width=True)
 
 with T["🔀 Compare"]:
     mode=st.selectbox("Comparison",["Year over Year","Month over Month"])
     if mode=="Year over Year":
         df=Q(f'SELECT mon "month",yr "year",{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1,2'); df["year"]=df["year"].astype(str)
-        st.plotly_chart(px.line(df,x="month",y="v",color="year",markers=True,title=f"YoY {mlab}").update_layout(height=440),use_container_width=True)
+        plot(px.line(df,x="month",y="v",color="year",markers=True,title=f"YoY {mlab}").update_layout(height=440),use_container_width=True)
     else:
         df=Q(f"SELECT date_trunc('month',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1"); df["MoM %"]=(df["v"].pct_change()*100).round(1)
         fig=go.Figure(); fig.add_bar(x=df["period"],y=df["v"],name=mlab)
         fig.add_trace(go.Scatter(x=df["period"],y=df["MoM %"],name="MoM %",yaxis="y2",mode="lines+markers"))
         fig.update_layout(height=440,yaxis=dict(title=mlab),yaxis2=dict(title="MoM %",overlaying="y",side="right"))
-        st.plotly_chart(fig,use_container_width=True)
+        plot(fig,use_container_width=True)
 
 with T["📦 SKUs"]:
     n=st.slider("Top N SKUs",5,50,15)

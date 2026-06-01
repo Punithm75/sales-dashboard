@@ -1,0 +1,8 @@
+.streamlit/secrets.toml
+secrets.toml
+*.json
+sales.parquet
+master.csv
+__pycache__/
+*.pyc
+.DS_Store
