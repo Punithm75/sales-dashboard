@@ -177,7 +177,7 @@ def classify(master: pd.DataFrame):
     cat,num,label=[],[],[]
     if master.empty: return cat,num,label
     SKIP={"product code","color code","category code","size code","style code","style no",
-          "product code planning","sku_code","key","accounting sku"}
+          "product code planning","sku_code","key","accounting sku","po product name"}
     NUMHINT={"asp","mrp","cogs","price","cost"}
     for c in master.columns:
         if c=="sku_code" or c in SALES_COLS: continue
@@ -246,27 +246,17 @@ def build_everything():
 
 try:
     con,CAT,NUM,LABEL,MATCH,_HAS_REF = build_everything()
-    # Promote product name & colour to filters even though they're high-cardinality labels
-    def _promote_exact(targets):
-        # prefer an exact (case-insensitive) column match; skip 'old' and 'category' variants
+    # Promote ONLY the exact columns we want as filters: product_name and Color.
+    # Exact (case-insensitive) match only — avoids pulling in "PO Product Name",
+    # "OLD COLOUR NAME", "Color Category", etc.
+    def _promote_exact(*targets):
         for t in targets:
-            for c in list(LABEL)+list(CAT):
-                lc=c.lower().strip()
-                if lc==t and c not in CAT:
+            for c in list(LABEL):              # only promote from label cols
+                if c.lower().strip()==t and c not in CAT:
                     CAT.insert(0, c); return c
         return None
-    def _promote_contains(targets, avoid=()):
-        for t in targets:
-            for c in list(LABEL):
-                lc=c.lower().strip()
-                if t in lc and not any(a in lc for a in avoid):
-                    if c not in CAT: CAT.insert(0, c)
-                    return c
-        return None
-    # Product name
-    _promote_exact(["product_name","product name"]) or _promote_contains(["product name","product_name"])
-    # Color: prefer the exact "Color"/"Colour" column, avoid OLD COLOUR NAME / Color Category
-    _promote_exact(["color","colour"]) or _promote_contains(["colour","color"], avoid=["old","category","new"])
+    _promote_exact("product_name","product name")
+    _promote_exact("color","colour")
 except Exception:
     st.title("Data load error"); st.error("Failed while preparing data:")
     st.code(traceback.format_exc())
