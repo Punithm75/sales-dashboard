@@ -351,8 +351,10 @@ with T["📈 Trend"]:
     plot(px.area(df,x="period",y="v",title=f"{g} {mlab}").update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
 
 with T["🛒 Channel"]:
-    df=Q(f"SELECT date_trunc('month',date) period,marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1")
-    plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,title=f"Monthly {mlab} by Channel").update_layout(height=420),width='stretch')
+    gc=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="gchan")
+    trc={"Daily":"day","Weekly":"week","Monthly":"month"}[gc]
+    df=Q(f"SELECT date_trunc('{trc}',date) period,marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1")
+    plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,title=f"{gc} {mlab} by Channel").update_layout(height=420),width='stretch')
     sh=Q(f"SELECT marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 2 DESC")
     a,b=st.columns(2)
     a.plotly_chart(px.pie(sh,names="marketplaces",values="v",hole=0.45,title="Channel Share"),width='stretch')
@@ -386,24 +388,35 @@ with T["📦 SKUs"]:
     st.dataframe(df,width='stretch')
 
 with T["🧮 Pivot"]:
+    # Columns dropdown: time options + only LOW-cardinality dims (so we never try to
+    # render thousands of columns, which breaks the table). High-cardinality fields
+    # like product_name / Color are fine for ROWS but not for COLUMNS.
+    def _card(col):
+        try: return con.execute(f'SELECT COUNT(DISTINCT "{col}") FROM joined').fetchone()[0]
+        except Exception: return 9999
     dim_opts=(CAT if CAT else [])+["marketplaces"]
-    col_opts=["Month (YYYY-MM)","Year"]+dim_opts
+    low_card_dims=[c for c in dim_opts if _card(c)<=30]
+    col_opts=["Month (YYYY-MM)","Year","Quarter"]+low_card_dims
     cpa,cpb=st.columns(2)
     rd=cpa.selectbox("Rows",dim_opts,key="piv_rows")
     cd=cpb.selectbox("Columns",col_opts,key="piv_cols")
-    # build the column expression
     if cd=="Month (YYYY-MM)":
-        col_sql="yr||'-'||lpad(mon::VARCHAR,2,'0')"
+        col_sql="yr||'-'||lpad(mon::VARCHAR,2,'0')"; order_sql="2"
     elif cd=="Year":
-        col_sql="CAST(yr AS VARCHAR)"
+        col_sql="CAST(yr AS VARCHAR)"; order_sql="2"
+    elif cd=="Quarter":
+        col_sql="yr||'-Q'||CAST(CEIL(mon/3.0) AS INT)"; order_sql="2"
     else:
-        col_sql=f'"{cd}"'
-    # avoid picking the same field for rows and columns
-    extra_where=f' AND {col_sql} IS NOT NULL' if cd in dim_opts else ''
-    df=Q(f'SELECT "{rd}" r, {col_sql} c, {agg} v FROM joined WHERE {WHERE} AND "{rd}" IS NOT NULL{extra_where} GROUP BY 1,2 ORDER BY 2')
+        col_sql=f'"{cd}"'; order_sql="1"
+    extra_where=f' AND {col_sql} IS NOT NULL' if cd in low_card_dims else ''
+    df=Q(f'SELECT "{rd}" r, {col_sql} c, {agg} v FROM joined WHERE {WHERE} AND "{rd}" IS NOT NULL{extra_where} GROUP BY 1,2 ORDER BY {order_sql}')
     if df.empty:
         st.info("No data for this selection.")
     else:
         piv=df.pivot(index="r",columns="c",values="v").fillna(0)
-        st.dataframe(piv.style.format("{:,.0f}"),width='stretch')
+        # add a row total and sort rows by it (most relevant rows first)
+        piv["Total"]=piv.sum(axis=1)
+        piv=piv.sort_values("Total",ascending=False)
+        st.caption(f"{len(piv):,} rows · {len(piv.columns)-1} columns")
+        st.dataframe(piv.style.format("{:,.0f}"),width='stretch',height=480)
         st.download_button("Download CSV",piv.to_csv().encode(),"pivot.csv","text/csv")
