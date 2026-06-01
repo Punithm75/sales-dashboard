@@ -35,6 +35,25 @@ DRIVE_FILE_ID = st.secrets.get("DRIVE_FILE_ID", os.environ.get("DRIVE_FILE_ID", 
 st.set_page_config(page_title="D2C Sales Dashboard", layout="wide",
                    initial_sidebar_state="expanded")
 
+# ---- Password gate ----
+def check_password():
+    def password_entered():
+        if st.session_state.get("pw", "") == st.secrets.get("APP_PASSWORD", ""):
+            st.session_state["auth_ok"] = True
+            del st.session_state["pw"]
+        else:
+            st.session_state["auth_ok"] = False
+
+    if st.session_state.get("auth_ok", False):
+        return True
+
+    st.text_input("Password", type="password", key="pw", on_change=password_entered)
+    if st.session_state.get("auth_ok") is False:
+        st.error("Incorrect password.")
+    st.stop()
+
+check_password()
+
 
 # --------------------------------------------------------------------------
 # Fetch the data file from Google Drive using a service account.
