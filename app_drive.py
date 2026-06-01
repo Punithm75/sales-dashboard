@@ -346,47 +346,47 @@ with T["📈 Trend"]:
     g=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="g")
     tr={"Daily":"day","Weekly":"week","Monthly":"month"}[g]
     df=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
-    plot(px.area(df,x="period",y="v",title=f"{g} {mlab}").update_layout(height=420,yaxis_title=mlab,xaxis_title=None),use_container_width=True)
+    plot(px.area(df,x="period",y="v",title=f"{g} {mlab}").update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
 
 with T["🛒 Channel"]:
     df=Q(f"SELECT date_trunc('month',date) period,marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1")
-    plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,title=f"Monthly {mlab} by Channel").update_layout(height=420),use_container_width=True)
+    plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,title=f"Monthly {mlab} by Channel").update_layout(height=420),width='stretch')
     sh=Q(f"SELECT marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 2 DESC")
     a,b=st.columns(2)
-    a.plotly_chart(px.pie(sh,names="marketplaces",values="v",hole=0.45,title="Channel Share"),use_container_width=True)
-    b.plotly_chart(px.bar(sh,x="marketplaces",y="v",text_auto=".2s",title="Channel Totals"),use_container_width=True)
+    a.plotly_chart(px.pie(sh,names="marketplaces",values="v",hole=0.45,title="Channel Share"),width='stretch')
+    b.plotly_chart(px.bar(sh,x="marketplaces",y="v",text_auto=".2s",title="Channel Totals"),width='stretch')
 
 if CAT:
     with T["🧩 By Attribute"]:
         dim=st.selectbox("Break down by",CAT)
         df=Q(f'SELECT "{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1 ORDER BY 2 DESC')
-        plot(px.bar(df,x="v",y="k",orientation="h",text_auto=".2s",title=f"{mlab} by {dim}").update_layout(height=max(400,len(df)*26),yaxis=dict(categoryorder="total ascending"),yaxis_title=None,xaxis_title=mlab),use_container_width=True)
+        plot(px.bar(df,x="v",y="k",orientation="h",text_auto=".2s",title=f"{mlab} by {dim}").update_layout(height=max(400,len(df)*26),yaxis=dict(categoryorder="total ascending"),yaxis_title=None,xaxis_title=mlab),width='stretch')
         trd=Q(f'SELECT date_trunc(\'month\',date) period,"{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1,2 ORDER BY 1')
-        plot(px.line(trd,x="period",y="v",color="k",markers=True,title=f"Monthly {mlab} by {dim}").update_layout(height=420),use_container_width=True)
+        plot(px.line(trd,x="period",y="v",color="k",markers=True,title=f"Monthly {mlab} by {dim}").update_layout(height=420),width='stretch')
 
 with T["🔀 Compare"]:
     mode=st.selectbox("Comparison",["Year over Year","Month over Month"])
     if mode=="Year over Year":
         df=Q(f'SELECT mon "month",yr "year",{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1,2'); df["year"]=df["year"].astype(str)
-        plot(px.line(df,x="month",y="v",color="year",markers=True,title=f"YoY {mlab}").update_layout(height=440),use_container_width=True)
+        plot(px.line(df,x="month",y="v",color="year",markers=True,title=f"YoY {mlab}").update_layout(height=440),width='stretch')
     else:
         df=Q(f"SELECT date_trunc('month',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1"); df["MoM %"]=(df["v"].pct_change()*100).round(1)
         fig=go.Figure(); fig.add_bar(x=df["period"],y=df["v"],name=mlab)
         fig.add_trace(go.Scatter(x=df["period"],y=df["MoM %"],name="MoM %",yaxis="y2",mode="lines+markers"))
         fig.update_layout(height=440,yaxis=dict(title=mlab),yaxis2=dict(title="MoM %",overlaying="y",side="right"))
-        plot(fig,use_container_width=True)
+        plot(fig,width='stretch')
 
 with T["📦 SKUs"]:
     n=st.slider("Top N SKUs",5,50,15)
     namecol=next((c for c in LABEL if "name" in c.lower()),None)
     sel=f'sku, "{namecol}"' if namecol else "sku"
     df=Q(f'SELECT {sel}, SUM(subtotal) rev, SUM(qty) units FROM joined WHERE {WHERE} GROUP BY {sel} ORDER BY {"rev" if metric=="subtotal" else "units"} DESC LIMIT {n}')
-    st.dataframe(df,use_container_width=True)
+    st.dataframe(df,width='stretch')
 
 with T["🧮 Pivot"]:
     rowopts=(CAT if CAT else [])+["marketplaces"]
     rd=st.selectbox("Rows",rowopts)
     df=Q(f'SELECT "{rd}" r, yr||\'-\'||lpad(mon::VARCHAR,2,\'0\') ym,{agg} v FROM joined WHERE {WHERE} AND "{rd}" IS NOT NULL GROUP BY 1,2 ORDER BY 2')
     piv=df.pivot(index="r",columns="ym",values="v").fillna(0)
-    st.dataframe(piv.style.format("{:,.0f}"),use_container_width=True)
+    st.dataframe(piv.style.format("{:,.0f}"),width='stretch')
     st.download_button("Download CSV",piv.to_csv().encode(),"pivot.csv","text/csv")
