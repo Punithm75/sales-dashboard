@@ -221,6 +221,8 @@ def get_db():
     sel.append(f"{qty} AS qty" if qty else "0 AS qty")
     sel.append(f"{chan} AS marketplaces" if chan else "'Unknown' AS marketplaces")
     sel.append(f"CAST({dat} AS DATE) AS date" if dat else "CURRENT_DATE AS date")
+    ref=pick("reference_code","invoice_id","billing_id","order_id","invoice","bill_id")
+    sel.append(f"CAST({ref} AS VARCHAR) AS reference_code" if ref else "CAST(NULL AS VARCHAR) AS reference_code")
     con.execute(f"CREATE VIEW sales AS SELECT {', '.join(sel)}, "
                 f"EXTRACT(month FROM CAST({dat} AS DATE)) AS mon, "
                 f"EXTRACT(year FROM CAST({dat} AS DATE)) AS yr FROM sales_raw")
@@ -252,14 +254,26 @@ try:
     CAT,NUM,LABEL,MATCH = setup()
     con=get_db()
     # Promote product name & colour to filters even though they're high-cardinality labels
-    def _promote(cands):
-        for lc_target in cands:
+    def _promote_exact(targets):
+        # prefer an exact (case-insensitive) column match; skip 'old' and 'category' variants
+        for t in targets:
+            for c in list(LABEL)+list(CAT):
+                lc=c.lower().strip()
+                if lc==t and c not in CAT:
+                    CAT.insert(0, c); return c
+        return None
+    def _promote_contains(targets, avoid=()):
+        for t in targets:
             for c in list(LABEL):
-                if lc_target in c.lower():
+                lc=c.lower().strip()
+                if t in lc and not any(a in lc for a in avoid):
                     if c not in CAT: CAT.insert(0, c)
-                    return
-    _promote(["product_name","product name","name"])
-    _promote(["colour","color"])
+                    return c
+        return None
+    # Product name
+    _promote_exact(["product_name","product name"]) or _promote_contains(["product name","product_name"])
+    # Color: prefer the exact "Color"/"Colour" column, avoid OLD COLOUR NAME / Color Category
+    _promote_exact(["color","colour"]) or _promote_contains(["colour","color"], avoid=["old","category","new"])
 except Exception:
     st.title("Data load error"); st.error("Failed while preparing data:")
     st.code(traceback.format_exc())
@@ -269,6 +283,8 @@ except Exception:
 def Q(sql): return con.execute(sql).df()
 
 # bounds for date picker (cheap min/max query)
+_cols_joined=[r[0] for r in con.execute("DESCRIBE joined").fetchall()]
+_HAS_REF=("reference_code" in _cols_joined)
 try:
     b=Q("SELECT min(date) lo, max(date) hi FROM sales").iloc[0]
     DMIN=pd.to_datetime(b.lo).date(); DMAX=pd.to_datetime(b.hi).date()
@@ -278,8 +294,8 @@ except Exception:
 # ---------- sidebar ----------
 st.sidebar.title("Controls")
 metric=st.sidebar.radio("Metric",["subtotal","qty"],horizontal=True,
-                        format_func=lambda x:"Revenue" if x=="subtotal" else "Units")
-mlab="Revenue" if metric=="subtotal" else "Units"; agg=f"SUM({metric})"
+                        format_func=lambda x:"Subtotal" if x=="subtotal" else "Units")
+mlab="Subtotal" if metric=="subtotal" else "Units"; agg=f"SUM({metric})"
 dr=st.sidebar.date_input("Date range", value=(DMIN,DMAX), min_value=DMIN, max_value=DMAX)
 start,end=(dr if isinstance(dr,tuple) and len(dr)==2 else (DMIN,DMAX))
 
@@ -290,8 +306,12 @@ def distinct(col):
         return []
 
 selected={}
-ch=st.sidebar.multiselect("Channel", distinct("marketplaces"))
+_all_ch=distinct("marketplaces")
+_default_ch=[c for c in _all_ch if c.lower().strip() not in ("internal","retail")]
+ch=st.sidebar.multiselect("Channel", _all_ch, default=_default_ch)
+# If user clears all, treat as "all selected" so the dashboard isn't empty
 if ch: selected["marketplaces"]=ch
+elif _all_ch and not ch: selected["marketplaces"]=_default_ch
 if CAT:
     st.sidebar.markdown("**Product filters**")
     for c in CAT[:6]:
@@ -331,10 +351,11 @@ elif MATCH<99:
     st.warning(f"SKU match rate: {MATCH:.1f}%. Unmatched rows count in totals but carry no attributes.")
 
 try:
-    k=Q(f"SELECT SUM(subtotal) rev, SUM(qty) units, COUNT(*) txns, COUNT(DISTINCT sku) skus FROM joined WHERE {WHERE}").iloc[0]
+    txn_expr="COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)"
+    k=Q(f"SELECT SUM(subtotal) rev, SUM(qty) units, {txn_expr} txns, COUNT(DISTINCT sku) skus FROM joined WHERE {WHERE}").iloc[0]
     c1,c2,c3,c4=st.columns(4)
-    c1.metric("Revenue",f"{(k.rev or 0):,.0f}"); c2.metric("Units",f"{(k.units or 0):,.0f}")
-    c3.metric("Transactions",f"{(k.txns or 0):,.0f}"); c4.metric("Active SKUs",f"{(k.skus or 0):,.0f}")
+    c1.metric("Subtotal",f"{(k.rev or 0):,.0f}"); c2.metric("Units",f"{(k.units or 0):,.0f}")
+    c3.metric("Orders",f"{(k.txns or 0):,.0f}"); c4.metric("Active SKUs",f"{(k.skus or 0):,.0f}")
 except Exception:
     st.error("Could not compute KPIs."); st.code(traceback.format_exc())
 st.divider()
@@ -384,9 +405,24 @@ with T["📦 SKUs"]:
     st.dataframe(df,width='stretch')
 
 with T["🧮 Pivot"]:
-    rowopts=(CAT if CAT else [])+["marketplaces"]
-    rd=st.selectbox("Rows",rowopts)
-    df=Q(f'SELECT "{rd}" r, yr||\'-\'||lpad(mon::VARCHAR,2,\'0\') ym,{agg} v FROM joined WHERE {WHERE} AND "{rd}" IS NOT NULL GROUP BY 1,2 ORDER BY 2')
-    piv=df.pivot(index="r",columns="ym",values="v").fillna(0)
-    st.dataframe(piv.style.format("{:,.0f}"),width='stretch')
-    st.download_button("Download CSV",piv.to_csv().encode(),"pivot.csv","text/csv")
+    dim_opts=(CAT if CAT else [])+["marketplaces"]
+    col_opts=["Month (YYYY-MM)","Year"]+dim_opts
+    cpa,cpb=st.columns(2)
+    rd=cpa.selectbox("Rows",dim_opts,key="piv_rows")
+    cd=cpb.selectbox("Columns",col_opts,key="piv_cols")
+    # build the column expression
+    if cd=="Month (YYYY-MM)":
+        col_sql="yr||'-'||lpad(mon::VARCHAR,2,'0')"
+    elif cd=="Year":
+        col_sql="CAST(yr AS VARCHAR)"
+    else:
+        col_sql=f'"{cd}"'
+    # avoid picking the same field for rows and columns
+    extra_where=f' AND {col_sql} IS NOT NULL' if cd in dim_opts else ''
+    df=Q(f'SELECT "{rd}" r, {col_sql} c, {agg} v FROM joined WHERE {WHERE} AND "{rd}" IS NOT NULL{extra_where} GROUP BY 1,2 ORDER BY 2')
+    if df.empty:
+        st.info("No data for this selection.")
+    else:
+        piv=df.pivot(index="r",columns="c",values="v").fillna(0)
+        st.dataframe(piv.style.format("{:,.0f}"),width='stretch')
+        st.download_button("Download CSV",piv.to_csv().encode(),"pivot.csv","text/csv")
