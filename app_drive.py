@@ -12,13 +12,22 @@ Sources:
 
 Join: sales.sku (text) <-> master.sku_code (text)
 """
-import os, io, tempfile
-import duckdb
-import pandas as pd
 import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
-from pathlib import Path
+import traceback
+
+# Surface ANY import/startup failure on the page instead of a blank "Oh no".
+try:
+    import os, io, tempfile
+    import duckdb
+    import pandas as pd
+    import plotly.express as px
+    import plotly.graph_objects as go
+    from pathlib import Path
+except Exception:
+    st.title("Startup error")
+    st.error("An import failed while starting the app:")
+    st.code(traceback.format_exc())
+    st.stop()
 
 HERE = Path(__file__).parent
 SALES_LOCAL = HERE / "sales.parquet"
@@ -41,9 +50,15 @@ def check_password():
 if st.secrets.get("APP_PASSWORD",""):
     check_password()
 
-DRIVE_FILE_ID    = st.secrets.get("DRIVE_FILE_ID", os.environ.get("DRIVE_FILE_ID",""))
-MASTER_SHEET_ID  = st.secrets.get("MASTER_SHEET_ID", os.environ.get("MASTER_SHEET_ID",""))
-MASTER_SHEET_TAB = st.secrets.get("MASTER_SHEET_TAB", os.environ.get("MASTER_SHEET_TAB","Master SKU"))
+try:
+    DRIVE_FILE_ID    = st.secrets.get("DRIVE_FILE_ID", os.environ.get("DRIVE_FILE_ID",""))
+    MASTER_SHEET_ID  = st.secrets.get("MASTER_SHEET_ID", os.environ.get("MASTER_SHEET_ID",""))
+    MASTER_SHEET_TAB = st.secrets.get("MASTER_SHEET_TAB", os.environ.get("MASTER_SHEET_TAB","Master SKU"))
+except Exception:
+    st.title("Secrets error")
+    st.error("Could not read app secrets:")
+    st.code(traceback.format_exc())
+    st.stop()
 
 # ---------- known sales columns (everything else in master = attribute) ----------
 SALES_COLS = {"marketplaces","date","mon","yr","sku","product_code_planning",
