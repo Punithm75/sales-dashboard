@@ -1,20 +1,18 @@
 """
-D2C Sales Dashboard — Streamlit + DuckDB
-=========================================
-Reads a Parquet file exported from Redshift and serves an interactive
-sales dashboard: daily / weekly / monthly sales by channel, with
-YoY, MoM and product-to-product comparison. Metric toggle: Qty or Subtotal.
+D2C Sales Dashboard v3 — fully dynamic
+======================================
+Joins sales data (sku) to a master SKU Google Sheet (sku_code) and AUTO-BUILDS
+filters from whatever columns the sheet contains. No code edits needed when the
+sheet changes — the app inspects the data and adapts.
 
-Run locally:
-    pip install streamlit duckdb pandas pyarrow plotly
-    streamlit run app.py
+Sources:
+  SALES  : Parquet/CSV in Google Drive (DRIVE_FILE_ID) or local sample.
+           Columns: marketplaces, date, mon, yr, sku, product_code_planning, color_code, qty, subtotal
+  MASTER : live Google Sheet (MASTER_SHEET_ID + MASTER_SHEET_TAB), keyed by sku_code.
 
-Data contract (columns expected in sales.parquet):
-    marketplaces (str) | date (date) | yr (int) | mon (int)
-    product_code (int) | color_code (int) | Qty (int) | Subtotal (float)
+Join: sales.sku (text) <-> master.sku_code (text)
 """
-
-import os
+import os, io, tempfile
 import duckdb
 import pandas as pd
 import streamlit as st
@@ -22,294 +20,288 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 
-# --------------------------------------------------------------------------
-# Config
-# --------------------------------------------------------------------------
-DATA_PATH = Path(__file__).parent / "sales.parquet"
-
-# Google Drive file ID of the data file (set in Streamlit "Secrets" when hosted,
-# or as an environment variable locally). If present, the app downloads the
-# latest copy from Drive on startup; otherwise it falls back to a local file.
-DRIVE_FILE_ID = st.secrets.get("DRIVE_FILE_ID", os.environ.get("DRIVE_FILE_ID", ""))
+HERE = Path(__file__).parent
+SALES_LOCAL = HERE / "sales.parquet"
+MASTER_LOCAL = HERE / "master.csv"
 
 st.set_page_config(page_title="D2C Sales Dashboard", layout="wide",
                    initial_sidebar_state="expanded")
 
-# ---- Password gate ----
+# ---------- password gate ----------
 def check_password():
-    def password_entered():
-        if st.session_state.get("pw", "") == st.secrets.get("APP_PASSWORD", ""):
-            st.session_state["auth_ok"] = True
-            del st.session_state["pw"]
+    def entered():
+        if st.session_state.get("pw","") == st.secrets.get("APP_PASSWORD",""):
+            st.session_state["auth_ok"]=True; del st.session_state["pw"]
         else:
-            st.session_state["auth_ok"] = False
-
-    if st.session_state.get("auth_ok", False):
-        return True
-
-    st.text_input("Password", type="password", key="pw", on_change=password_entered)
-    if st.session_state.get("auth_ok") is False:
-        st.error("Incorrect password.")
+            st.session_state["auth_ok"]=False
+    if st.session_state.get("auth_ok",False): return True
+    st.text_input("Password", type="password", key="pw", on_change=entered)
+    if st.session_state.get("auth_ok") is False: st.error("Incorrect password.")
     st.stop()
+if st.secrets.get("APP_PASSWORD",""):
+    check_password()
 
-check_password()
+DRIVE_FILE_ID    = st.secrets.get("DRIVE_FILE_ID", os.environ.get("DRIVE_FILE_ID",""))
+MASTER_SHEET_ID  = st.secrets.get("MASTER_SHEET_ID", os.environ.get("MASTER_SHEET_ID",""))
+MASTER_SHEET_TAB = st.secrets.get("MASTER_SHEET_TAB", os.environ.get("MASTER_SHEET_TAB","Master SKU"))
 
+# ---------- known sales columns (everything else in master = attribute) ----------
+SALES_COLS = {"marketplaces","date","mon","yr","sku","product_code_planning",
+              "color_code","qty","subtotal","Qty","Subtotal","product_code"}
 
-# --------------------------------------------------------------------------
-# Fetch the data file from Google Drive using a service account.
-# Credentials come from Streamlit Secrets (when hosted) under [gcp_service_account],
-# never hard-coded. Runs once per app start; cached.
-# --------------------------------------------------------------------------
-@st.cache_resource(ttl=3600)  # re-download at most once per hour
-def fetch_from_drive() -> str:
-    """Download the Drive file to a local temp path and return that path."""
+# ---------- load sales ----------
+@st.cache_resource(ttl=3600)
+def fetch_sales_from_drive() -> str:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseDownload
-    import io, tempfile
-
     info = dict(st.secrets["gcp_service_account"])
     creds = service_account.Credentials.from_service_account_info(
-        info, scopes=["https://www.googleapis.com/auth/drive.readonly"]
-    )
-    service = build("drive", "v3", credentials=creds)
-    request = service.files().get_media(fileId=DRIVE_FILE_ID)
+        info, scopes=["https://www.googleapis.com/auth/drive.readonly"])
+    svc = build("drive","v3",credentials=creds)
+    req = svc.files().get_media(fileId=DRIVE_FILE_ID)
+    out = Path(tempfile.gettempdir())/"sales_from_drive"
+    with io.FileIO(out,"wb") as fh:
+        dl=MediaIoBaseDownload(fh,req); done=False
+        while not done: _,done=dl.next_chunk()
+    return out.as_posix()
 
-    out_path = Path(tempfile.gettempdir()) / "sales_from_drive.parquet"
-    with io.FileIO(out_path, "wb") as fh:
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-    return out_path.as_posix()
+def sales_path() -> str:
+    return fetch_sales_from_drive() if DRIVE_FILE_ID else SALES_LOCAL.as_posix()
 
+@st.cache_data(ttl=3600)
+def load_sales() -> pd.DataFrame:
+    p = sales_path()
+    try:
+        df = pd.read_parquet(p)
+    except Exception:
+        df = pd.read_csv(p)
+    df.columns=[str(c).strip() for c in df.columns]
+    # normalise the metric column names so the rest of the app is stable
+    ren={}
+    if "Qty" in df.columns and "qty" not in df.columns: ren["Qty"]="qty"
+    if "Subtotal" in df.columns and "subtotal" not in df.columns: ren["Subtotal"]="subtotal"
+    df=df.rename(columns=ren)
+    if "sku" in df.columns: df["sku"]=df["sku"].astype(str).str.strip()
+    df["date"]=pd.to_datetime(df["date"])
+    if "mon" not in df.columns: df["mon"]=df["date"].dt.month
+    if "yr" not in df.columns: df["yr"]=df["date"].dt.year
+    return df
 
-def data_source_path() -> str:
-    """Use Drive if a file ID is configured, else the local sample file."""
-    if DRIVE_FILE_ID:
-        return fetch_from_drive()
-    return DATA_PATH.as_posix()
+# ---------- load master (live sheet or local sample) ----------
+@st.cache_data(ttl=3600)
+def load_master() -> pd.DataFrame:
+    if MASTER_SHEET_ID:
+        import gspread
+        from google.oauth2 import service_account
+        info=dict(st.secrets["gcp_service_account"])
+        creds=service_account.Credentials.from_service_account_info(
+            info, scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"])
+        gc=gspread.authorize(creds)
+        ws=gc.open_by_key(MASTER_SHEET_ID).worksheet(MASTER_SHEET_TAB)
+        df=pd.DataFrame(ws.get_all_records())
+    else:
+        if not MASTER_LOCAL.exists(): return pd.DataFrame()
+        df=pd.read_csv(MASTER_LOCAL)
+    if df.empty: return df
+    df.columns=[str(c).strip() for c in df.columns]
+    # find the join key column (sku_code, or first column containing 'sku')
+    key=None
+    for c in df.columns:
+        if c.lower().replace(" ","")=="sku_code": key=c; break
+    if key is None:
+        for c in df.columns:
+            if "sku" in c.lower(): key=c; break
+    if key is None: return pd.DataFrame()
+    df=df.rename(columns={key:"sku_code"})
+    df["sku_code"]=df["sku_code"].astype(str).str.strip()
+    return df
 
-# --------------------------------------------------------------------------
-# Data access. DuckDB queries the Parquet file in-process — no DB server,
-# no Redshift connection, no credentials here. Cached so it loads once.
-# --------------------------------------------------------------------------
-@st.cache_resource
-def get_con():
-    con = duckdb.connect(database=":memory:")
-    path = data_source_path()
-    con.execute(f"""
-        CREATE VIEW sales AS
-        SELECT * FROM read_parquet('{path}')
-    """)
-    return con
+# ---------- auto-classify master columns into filter types ----------
+@st.cache_data(ttl=3600)
+def classify(master: pd.DataFrame):
+    """Return (categorical_cols, numeric_cols, label_cols) auto-detected."""
+    cat, num, label = [], [], []
+    if master.empty: return cat, num, label
+    # columns to never surface as filters (join/code/id-like)
+    SKIP = {"product code","color code","category code","size code","style code",
+            "style no","product code planning","sku_code","key","accounting sku"}
+    # columns that should be numeric range sliders if numeric (price/cost-like)
+    NUMHINT = {"asp","mrp","cogs","price","cost"}
+    for c in master.columns:
+        if c=="sku_code" or c in SALES_COLS: continue
+        lc=c.lower().strip()
+        if lc in SKIP or lc.endswith("code") or lc.endswith("sku code") or "asin" in lc:
+            continue
+        s=master[c]
+        nun=s.nunique(dropna=True)
+        asnum=pd.to_numeric(s, errors="coerce")
+        is_numeric = asnum.notna().mean()>0.8
+        # price/cost-like numeric -> slider
+        if is_numeric and any(h in lc for h in NUMHINT):
+            num.append(c); continue
+        # other high-cardinality numeric (ids etc) -> skip as filter
+        if is_numeric and nun>40:
+            continue
+        # low-cardinality -> categorical filter
+        if 1 < nun <= 60:
+            cat.append(c)
+        else:
+            label.append(c)
+    return cat, num, label
 
-@st.cache_data
-def q(sql: str) -> pd.DataFrame:
-    return get_con().execute(sql).df()
+# ---------- build joined frame ----------
+@st.cache_data(ttl=3600)
+def build_joined():
+    sales=load_sales()
+    master=load_master()
+    if master.empty or "sku" not in sales.columns:
+        sales["_matched"]=False
+        return sales, [], [], []
+    cat,num,label=classify(master)
+    keep=["sku_code"]+cat+num+label
+    keep=[c for c in keep if c in master.columns]
+    m=master[keep].drop_duplicates("sku_code")
+    for c in num:
+        if c in m.columns: m[c]=pd.to_numeric(m[c], errors="coerce")
+    j=sales.merge(m, how="left", left_on="sku", right_on="sku_code")
+    j["_matched"]=j["sku_code"].notna()
+    return j, cat, num, label
 
-@st.cache_data
-def bounds():
-    r = q("SELECT min(date) lo, max(date) hi FROM sales").iloc[0]
-    return pd.to_datetime(r.lo).date(), pd.to_datetime(r.hi).date()
+con=duckdb.connect(":memory:")
+@st.cache_data(ttl=3600)
+def register():
+    j,cat,num,label=build_joined()
+    return j,cat,num,label
 
-@st.cache_data
-def channels():
-    return q("SELECT DISTINCT marketplaces FROM sales ORDER BY 1")["marketplaces"].tolist()
+jdf,CAT,NUM,LABEL=register()
+con.register("joined", jdf)
 
-@st.cache_data
-def products():
-    return q("SELECT DISTINCT product_code FROM sales ORDER BY 1")["product_code"].tolist()
+def Q(sql): return con.execute(sql).df()
 
-# --------------------------------------------------------------------------
-# Sidebar — global controls
-# --------------------------------------------------------------------------
+# ---------- sidebar ----------
 st.sidebar.title("Controls")
+metric=st.sidebar.radio("Metric",["subtotal","qty"],horizontal=True,
+                        format_func=lambda x:"Revenue" if x=="subtotal" else "Units")
+mlab="Revenue" if metric=="subtotal" else "Units"
+agg=f"SUM({metric})"
 
-metric = st.sidebar.radio("Metric", ["Subtotal", "Qty"], horizontal=True)
-metric_label = "Revenue (Subtotal)" if metric == "Subtotal" else "Units (Qty)"
-agg = f"SUM({metric})"
+dmin=pd.to_datetime(jdf["date"]).min().date()
+dmax=pd.to_datetime(jdf["date"]).max().date()
+dr=st.sidebar.date_input("Date range", value=(dmin,dmax), min_value=dmin, max_value=dmax)
+start,end=(dr if isinstance(dr,tuple) and len(dr)==2 else (dmin,dmax))
 
-lo, hi = bounds()
-date_range = st.sidebar.date_input("Date range", value=(lo, hi), min_value=lo, max_value=hi)
-if isinstance(date_range, tuple) and len(date_range) == 2:
-    start, end = date_range
+def ms(label,col,container=st.sidebar):
+    if col not in jdf.columns: return None
+    opts=sorted([str(x) for x in jdf[col].dropna().unique() if str(x)!=""])
+    if not opts: return None
+    v=container.multiselect(label,opts)
+    return v or None
+
+selected={}
+if "marketplaces" in jdf.columns:
+    v=ms("Channel","marketplaces");  selected["marketplaces"]=v if v else None
+
+# auto-built product filters (first ~6 categorical up front, rest in expander)
+if CAT:
+    st.sidebar.markdown("**Product filters**")
+    primary=CAT[:6]; rest=CAT[6:]
+    for c in primary:
+        v=ms(c,c)
+        if v: selected[c]=v
+    if rest or NUM:
+        with st.sidebar.expander("More filters"):
+            for c in rest:
+                v=ms(c,c,container=st)
+                if v: selected[c]=v
+            num_ranges={}
+            for c in NUM:
+                if jdf[c].notna().any():
+                    lo,hi=float(jdf[c].min()),float(jdf[c].max())
+                    if lo<hi:
+                        num_ranges[c]=st.slider(c,lo,hi,(lo,hi))
 else:
-    start, end = lo, hi
+    num_ranges={}
 
-all_ch = channels()
-sel_ch = st.sidebar.multiselect("Channels", all_ch, default=all_ch)
-if not sel_ch:
-    sel_ch = all_ch
+# where clause
+def sin(col,vals): return "\""+col+"\" IN ("+",".join("'"+v.replace("'","''")+"'" for v in vals)+")"
+wheres=[f"date BETWEEN '{start}' AND '{end}'"]
+for col,vals in selected.items():
+    if vals: wheres.append(sin(col,vals))
+for c,(lo,hi) in (num_ranges.items() if 'num_ranges' in dir() else []):
+    wheres.append(f"\"{c}\" BETWEEN {lo} AND {hi}")
+WHERE=" AND ".join(wheres)
 
-ch_filter = "(" + ",".join(f"'{c}'" for c in sel_ch) + ")"
-base_where = f"date BETWEEN '{start}' AND '{end}' AND marketplaces IN {ch_filter}"
-
-def fmt(v, m=metric):
-    if m == "Subtotal":
-        return f"{v:,.0f}"
-    return f"{v:,.0f}"
-
-# --------------------------------------------------------------------------
-# Header + KPIs
-# --------------------------------------------------------------------------
+# ---------- header + KPIs ----------
 st.title("D2C Sales Dashboard")
-st.caption(f"{metric_label} · {start} → {end} · channels: {', '.join(sel_ch)}")
+active=[f"{k}: {', '.join(v)}" for k,v in selected.items() if v]
+st.caption(f"{mlab} · {start} → {end}"+(" · "+" · ".join(active) if active else ""))
 
-kpi = q(f"""
-    SELECT {agg} AS total, SUM(Qty) AS units, SUM(Subtotal) AS rev,
-           COUNT(*) AS txns, COUNT(DISTINCT product_code) AS skus
-    FROM sales WHERE {base_where}
-""").iloc[0]
+matched=jdf["_matched"].mean()*100 if "_matched" in jdf.columns else 0
+if not CAT:
+    st.info("No master attributes loaded yet — connect the master sheet (MASTER_SHEET_ID) to unlock product filters. Showing sales-only views.")
+elif matched<99:
+    st.warning(f"SKU match rate to master: {matched:.1f}%. Unmatched rows still count in totals but carry no attributes.")
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Revenue", f"{kpi.rev:,.0f}")
-c2.metric("Units", f"{kpi.units:,.0f}")
-c3.metric("Transactions", f"{kpi.txns:,.0f}")
-c4.metric("Active SKUs", f"{kpi.skus:,.0f}")
-
+k=Q(f"SELECT SUM(subtotal) rev, SUM(qty) units, COUNT(*) txns, COUNT(DISTINCT sku) skus FROM joined WHERE {WHERE}").iloc[0]
+c1,c2,c3,c4=st.columns(4)
+c1.metric("Revenue",f"{(k.rev or 0):,.0f}")
+c2.metric("Units",f"{(k.units or 0):,.0f}")
+c3.metric("Transactions",f"{(k.txns or 0):,.0f}")
+c4.metric("Active SKUs",f"{(k.skus or 0):,.0f}")
 st.divider()
 
-# --------------------------------------------------------------------------
-# Tabs
-# --------------------------------------------------------------------------
-tab_trend, tab_channel, tab_compare, tab_product, tab_table = st.tabs(
-    ["📈 Trend", "🛒 By Channel", "🔀 Compare", "📦 Products", "🧮 Pivot Table"]
-)
+tabs=["📈 Trend","🛒 Channel"]
+if CAT: tabs.append("🧩 By Attribute")
+tabs+=["🔀 Compare","📦 SKUs","🧮 Pivot"]
+T=st.tabs(tabs); idx={name:t for name,t in zip(tabs,T)}
 
-# ---- Trend: daily / weekly / monthly ----
-with tab_trend:
-    grain = st.radio("Granularity", ["Daily", "Weekly", "Monthly"],
-                     horizontal=True, key="grain")
-    trunc = {"Daily": "day", "Weekly": "week", "Monthly": "month"}[grain]
-    df = q(f"""
-        SELECT date_trunc('{trunc}', date) AS period, {agg} AS "value"
-        FROM sales WHERE {base_where}
-        GROUP BY 1 ORDER BY 1
-    """)
-    fig = px.area(df, x="period", y="value", title=f"{grain} {metric_label}")
-    fig.update_traces(line_width=2)
-    fig.update_layout(height=420, yaxis_title=metric_label, xaxis_title=None)
-    st.plotly_chart(fig, use_container_width=True)
+with idx["📈 Trend"]:
+    g=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="g1")
+    tr={"Daily":"day","Weekly":"week","Monthly":"month"}[g]
+    df=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
+    st.plotly_chart(px.area(df,x="period",y="v",title=f"{g} {mlab}").update_layout(height=420,yaxis_title=mlab,xaxis_title=None),use_container_width=True)
 
-# ---- By Channel ----
-with tab_channel:
-    grain2 = st.radio("Granularity", ["Daily", "Weekly", "Monthly"],
-                      horizontal=True, key="grain2", index=2)
-    trunc2 = {"Daily": "day", "Weekly": "week", "Monthly": "month"}[grain2]
-    df = q(f"""
-        SELECT date_trunc('{trunc2}', date) AS period, marketplaces, {agg} AS "value"
-        FROM sales WHERE {base_where}
-        GROUP BY 1, 2 ORDER BY 1
-    """)
-    fig = px.line(df, x="period", y="value", color="marketplaces",
-                  title=f"{grain2} {metric_label} by Channel", markers=True)
-    fig.update_layout(height=420, yaxis_title=metric_label, xaxis_title=None)
-    st.plotly_chart(fig, use_container_width=True)
+with idx["🛒 Channel"]:
+    if "marketplaces" in jdf.columns:
+        df=Q(f"SELECT date_trunc('month',date) period,marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1")
+        st.plotly_chart(px.line(df,x="period",y="v",color="marketplaces",markers=True,title=f"Monthly {mlab} by Channel").update_layout(height=420),use_container_width=True)
+        sh=Q(f"SELECT marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 2 DESC")
+        a,b=st.columns(2)
+        a.plotly_chart(px.pie(sh,names="marketplaces",values="v",hole=0.45,title="Channel Share"),use_container_width=True)
+        b.plotly_chart(px.bar(sh,x="marketplaces",y="v",text_auto=".2s",title="Channel Totals"),use_container_width=True)
 
-    share = q(f"""
-        SELECT marketplaces, {agg} AS "value"
-        FROM sales WHERE {base_where}
-        GROUP BY 1 ORDER BY 2 DESC
-    """)
-    cpie, cbar = st.columns(2)
-    cpie.plotly_chart(px.pie(share, names="marketplaces", values="value",
-                             title="Channel Share", hole=0.45), use_container_width=True)
-    cbar.plotly_chart(px.bar(share, x="marketplaces", y="value",
-                             title="Channel Totals", text_auto=".2s"),
-                      use_container_width=True)
+if CAT:
+    with idx["🧩 By Attribute"]:
+        dim=st.selectbox("Break down by",CAT)
+        df=Q(f'SELECT "{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1 ORDER BY 2 DESC')
+        st.plotly_chart(px.bar(df,x="v",y="k",orientation="h",text_auto=".2s",title=f"{mlab} by {dim}").update_layout(height=max(400,len(df)*26),yaxis=dict(categoryorder="total ascending"),yaxis_title=None,xaxis_title=mlab),use_container_width=True)
+        trd=Q(f'SELECT date_trunc(\'month\',date) period,"{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1,2 ORDER BY 1')
+        st.plotly_chart(px.line(trd,x="period",y="v",color="k",markers=True,title=f"Monthly {mlab} by {dim}").update_layout(height=420),use_container_width=True)
 
-# ---- Compare: YoY / MoM / Product vs Product ----
-with tab_compare:
-    mode = st.selectbox("Comparison mode",
-                        ["Year over Year (YoY)", "Month over Month (MoM)",
-                         "Product vs Product"])
+with idx["🔀 Compare"]:
+    mode=st.selectbox("Comparison",["Year over Year","Month over Month"])
+    if mode=="Year over Year":
+        df=Q(f'SELECT mon "month",yr "year",{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1,2'); df["year"]=df["year"].astype(str)
+        st.plotly_chart(px.line(df,x="month",y="v",color="year",markers=True,title=f"YoY {mlab}").update_layout(height=440),use_container_width=True)
+    else:
+        df=Q(f"SELECT date_trunc('month',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1"); df["MoM %"]=(df["v"].pct_change()*100).round(1)
+        fig=go.Figure(); fig.add_bar(x=df["period"],y=df["v"],name=mlab)
+        fig.add_trace(go.Scatter(x=df["period"],y=df["MoM %"],name="MoM %",yaxis="y2",mode="lines+markers"))
+        fig.update_layout(height=440,yaxis=dict(title=mlab),yaxis2=dict(title="MoM %",overlaying="y",side="right"))
+        st.plotly_chart(fig,use_container_width=True)
 
-    if mode == "Year over Year (YoY)":
-        df = q(f"""
-            SELECT mon AS "month", yr AS "year", {agg} AS "value"
-            FROM sales WHERE marketplaces IN {ch_filter}
-            GROUP BY 1, 2 ORDER BY 1, 2
-        """)
-        df["year"] = df["year"].astype(str)
-        fig = px.line(df, x="month", y="value", color="year", markers=True,
-                      title=f"YoY {metric_label} by Month")
-        fig.update_layout(height=440, xaxis=dict(tickmode="linear"),
-                          yaxis_title=metric_label)
-        st.plotly_chart(fig, use_container_width=True)
+with idx["📦 SKUs"]:
+    n=st.slider("Top N SKUs",5,50,15)
+    namecol=next((c for c in LABEL if "name" in c.lower()),None)
+    sel=f'sku, "{namecol}"' if namecol else "sku"
+    df=Q(f'SELECT {sel}, SUM(subtotal) rev, SUM(qty) units FROM joined WHERE {WHERE} GROUP BY {sel} ORDER BY {"rev" if metric=="subtotal" else "units"} DESC LIMIT {n}')
+    st.dataframe(df,use_container_width=True)
 
-        piv = df.pivot(index="month", columns="year", values="value").fillna(0)
-        yrs = sorted(piv.columns)
-        if len(yrs) >= 2:
-            a, b = yrs[-2], yrs[-1]
-            piv["Δ %"] = ((piv[b] - piv[a]) / piv[a].replace(0, pd.NA) * 100).round(1)
-        st.dataframe(piv.style.format("{:,.0f}", subset=yrs), use_container_width=True)
-
-    elif mode == "Month over Month (MoM)":
-        df = q(f"""
-            SELECT date_trunc('month', date) AS period, {agg} AS "value"
-            FROM sales WHERE {base_where}
-            GROUP BY 1 ORDER BY 1
-        """)
-        df["MoM %"] = (df["value"].pct_change() * 100).round(1)
-        fig = go.Figure()
-        fig.add_bar(x=df["period"], y=df["value"], name=metric_label)
-        fig.add_trace(go.Scatter(x=df["period"], y=df["MoM %"], name="MoM %",
-                                 yaxis="y2", mode="lines+markers"))
-        fig.update_layout(height=440, title=f"MoM {metric_label}",
-                          yaxis=dict(title=metric_label),
-                          yaxis2=dict(title="MoM %", overlaying="y", side="right"))
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(df, use_container_width=True)
-
-    else:  # Product vs Product
-        prods = products()
-        picks = st.multiselect("Pick products to compare", prods,
-                               default=prods[:3], max_selections=8)
-        if picks:
-            plist = "(" + ",".join(str(p) for p in picks) + ")"
-            grainp = st.radio("Granularity", ["Weekly", "Monthly"],
-                              horizontal=True, key="grainp", index=1)
-            truncp = {"Weekly": "week", "Monthly": "month"}[grainp]
-            df = q(f"""
-                SELECT date_trunc('{truncp}', date) AS period,
-                       product_code, {agg} AS "value"
-                FROM sales
-                WHERE {base_where} AND product_code IN {plist}
-                GROUP BY 1, 2 ORDER BY 1
-            """)
-            df["product_code"] = df["product_code"].astype(str)
-            fig = px.line(df, x="period", y="value", color="product_code",
-                          markers=True, title=f"Product comparison · {metric_label}")
-            fig.update_layout(height=440, yaxis_title=metric_label)
-            st.plotly_chart(fig, use_container_width=True)
-
-# ---- Products: top performers ----
-with tab_product:
-    topn = st.slider("Top N products", 5, 50, 15)
-    df = q(f"""
-        SELECT product_code, {agg} AS "value", SUM(Qty) AS units, SUM(Subtotal) AS rev
-        FROM sales WHERE {base_where}
-        GROUP BY 1 ORDER BY 2 DESC LIMIT {topn}
-    """)
-    df["product_code"] = df["product_code"].astype(str)
-    fig = px.bar(df, x="value", y="product_code", orientation="h",
-                 title=f"Top {topn} Products by {metric_label}", text_auto=".2s")
-    fig.update_layout(height=max(420, topn * 26),
-                      yaxis=dict(categoryorder="total ascending"))
-    st.plotly_chart(fig, use_container_width=True)
-
-# ---- Pivot Table ----
-with tab_table:
-    st.caption("Channel × Month pivot — the Sheets replacement, but at scale.")
-    df = q(f"""
-        SELECT marketplaces,
-               yr || '-' || lpad(mon::VARCHAR, 2, '0') AS ym,
-               {agg} AS "value"
-        FROM sales WHERE {base_where}
-        GROUP BY 1, 2 ORDER BY 2
-    """)
-    piv = df.pivot(index="marketplaces", columns="ym", values="value").fillna(0)
-    st.dataframe(piv.style.format("{:,.0f}"), use_container_width=True)
-    st.download_button("Download CSV", piv.to_csv().encode(),
-                       "pivot.csv", "text/csv")
+with idx["🧮 Pivot"]:
+    rowopts=([c for c in CAT] if CAT else [])+["marketplaces"]
+    rd=st.selectbox("Rows",rowopts)
+    df=Q(f'SELECT "{rd}" r, yr||\'-\'||lpad(mon::VARCHAR,2,\'0\') ym,{agg} v FROM joined WHERE {WHERE} AND "{rd}" IS NOT NULL GROUP BY 1,2 ORDER BY 2')
+    piv=df.pivot(index="r",columns="ym",values="v").fillna(0)
+    st.dataframe(piv.style.format("{:,.0f}"),use_container_width=True)
+    st.download_button("Download CSV",piv.to_csv().encode(),"pivot.csv","text/csv")
