@@ -201,8 +201,17 @@ def register():
     j,cat,num,label=build_joined()
     return j,cat,num,label
 
-jdf,CAT,NUM,LABEL=register()
-con.register("joined", jdf)
+try:
+    jdf,CAT,NUM,LABEL=register()
+    con.register("joined", jdf)
+except Exception as _e:
+    import traceback as _tb
+    st.error("The app hit an error while loading data. Details below:")
+    st.code(_tb.format_exc())
+    st.info("Common causes: (1) the sales file in Drive isn't readable by the service account, "
+            "(2) the Drive file isn't Parquet/CSV, (3) the master sheet isn't shared yet. "
+            "The app will keep running in a limited state.")
+    st.stop()
 
 def Q(sql): return con.execute(sql).df()
 
@@ -276,12 +285,17 @@ if not CAT:
 elif matched<99:
     st.warning(f"SKU match rate to master: {matched:.1f}%. Unmatched rows still count in totals but carry no attributes.")
 
-k=Q(f"SELECT SUM(subtotal) rev, SUM(qty) units, COUNT(*) txns, COUNT(DISTINCT sku) skus FROM joined WHERE {WHERE}").iloc[0]
-c1,c2,c3,c4=st.columns(4)
-c1.metric("Revenue",f"{(k.rev or 0):,.0f}")
-c2.metric("Units",f"{(k.units or 0):,.0f}")
-c3.metric("Transactions",f"{(k.txns or 0):,.0f}")
-c4.metric("Active SKUs",f"{(k.skus or 0):,.0f}")
+try:
+    k=Q(f"SELECT SUM(subtotal) rev, SUM(qty) units, COUNT(*) txns, COUNT(DISTINCT sku) skus FROM joined WHERE {WHERE}").iloc[0]
+    c1,c2,c3,c4=st.columns(4)
+    c1.metric("Revenue",f"{(k.rev or 0):,.0f}")
+    c2.metric("Units",f"{(k.units or 0):,.0f}")
+    c3.metric("Transactions",f"{(k.txns or 0):,.0f}")
+    c4.metric("Active SKUs",f"{(k.skus or 0):,.0f}")
+except Exception as _e:
+    import traceback as _tb
+    st.error("Could not compute KPIs for the current selection.")
+    st.code(_tb.format_exc())
 st.divider()
 
 tabs=["📈 Trend","🛒 Channel"]
