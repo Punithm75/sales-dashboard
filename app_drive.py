@@ -195,25 +195,25 @@ def build_joined():
     j["_matched"]=j["sku_code"].notna()
     return j, cat, num, label
 
-con=duckdb.connect(":memory:")
-@st.cache_data(ttl=3600)
-def register():
-    j,cat,num,label=build_joined()
-    return j,cat,num,label
-
 try:
-    jdf,CAT,NUM,LABEL=register()
-    con.register("joined", jdf)
+    jdf, CAT, NUM, LABEL = build_joined()
 except Exception as _e:
     import traceback as _tb
     st.error("The app hit an error while loading data. Details below:")
     st.code(_tb.format_exc())
     st.info("Common causes: (1) the sales file in Drive isn't readable by the service account, "
-            "(2) the Drive file isn't Parquet/CSV, (3) the master sheet isn't shared yet. "
-            "The app will keep running in a limited state.")
+            "(2) the Drive file isn't Parquet/CSV, (3) the master sheet isn't shared yet.")
     st.stop()
 
-def Q(sql): return con.execute(sql).df()
+def Q(sql):
+    # fresh in-memory connection each call; register the current joined frame
+    c = duckdb.connect(":memory:")
+    c.register("joined", jdf)
+    try:
+        return c.execute(sql).df()
+    finally:
+        c.close()
+
 
 # ---------- sidebar ----------
 st.sidebar.title("Controls")
