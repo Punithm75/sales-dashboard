@@ -38,27 +38,25 @@ st.markdown('''
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Outfit:wght@300;400;500;600;700;800&display=swap');
 
 :root{
-  --bg:#0b0d17; --bg2:#10131f; --panel:#161a28; --panel2:#1c2133; --line:#2b3147;
-  --ink:#eef0f7; --muted:#8b92a8;
-  --violet:#7c5cff; --indigo:#5b8def; --cyan:#22d3ee; --emerald:#34d399;
-  --amber:#fbbf24; --coral:#fb7185; --pink:#e879f9;
+  --bg:#0e0e10; --panel:#16161a; --panel2:#1d1d22; --line:#2a2a30;
+  --ink:#f4f4f5; --muted:#9b9ba6;
+  --lilac:#9b87f5; --sand:#e8c468; --rose:#e87a90; --teal:#5bbfb0;
 }
 html, body, [class*="css"], .stApp{ font-family:'Outfit',sans-serif; }
 
-/* Atmospheric multi-glow background */
+/* Refined single-accent atmosphere */
 .stApp{
   background:
-    radial-gradient(900px 500px at 12% -8%, rgba(124,92,255,.18) 0%, transparent 55%),
-    radial-gradient(800px 500px at 95% 0%, rgba(34,211,238,.12) 0%, transparent 50%),
-    radial-gradient(700px 600px at 60% 110%, rgba(52,211,153,.08) 0%, transparent 55%),
-    #0b0d17;
+    radial-gradient(1000px 600px at 15% -10%, rgba(155,135,245,.12) 0%, transparent 55%),
+    radial-gradient(700px 500px at 100% 0%, rgba(155,135,245,.05) 0%, transparent 50%),
+    #0e0e10;
   color:var(--ink);
 }
 
 /* Title — gradient wordmark */
 h1{ font-family:'Fraunces',serif !important; font-weight:700 !important;
     letter-spacing:-1px; font-size:2.7rem !important; margin-top:.1rem !important;
-    background:linear-gradient(100deg,#fff 0%,#b9a8ff 45%,#7cd9ff 100%);
+    background:linear-gradient(100deg,#fff 0%,#c9bdff 100%);
     -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
 h2,h3{ font-family:'Outfit',sans-serif !important; font-weight:600 !important; color:var(--ink); }
 
@@ -67,9 +65,9 @@ section[data-testid="stSidebar"]{
   background:linear-gradient(180deg,#11141f 0%,#0d1019 100%);
   border-right:1px solid var(--line); }
 section[data-testid="stSidebar"] h1{ font-size:1.25rem !important;
-  background:linear-gradient(90deg,#fff,#b9a8ff); -webkit-background-clip:text;
+  background:linear-gradient(90deg,#fff,#c9bdff); -webkit-background-clip:text;
   -webkit-text-fill-color:transparent; }
-section[data-testid="stSidebar"] .stMarkdown strong{ color:var(--violet); }
+section[data-testid="stSidebar"] .stMarkdown strong{ color:var(--lilac); }
 
 /* KPI cards — glass panels with a colored top accent; each of the 4 gets its own hue */
 div[data-testid="stMetric"]{
@@ -80,32 +78,22 @@ div[data-testid="stMetric"]{
   transition:transform .18s ease, box-shadow .18s ease, border-color .18s; }
 div[data-testid="stMetric"]:hover{ transform:translateY(-4px);
   box-shadow:0 14px 40px rgba(0,0,0,.5); }
-div[data-testid="stMetric"]::before{ content:""; position:absolute; top:0; left:0; right:0;
-  height:4px; background:var(--violet); }
-/* color each KPI card differently */
-div[data-testid="stColumn"]:nth-of-type(1) div[data-testid="stMetric"]::before{ background:linear-gradient(90deg,#7c5cff,#a78bfa);}
-div[data-testid="stColumn"]:nth-of-type(2) div[data-testid="stMetric"]::before{ background:linear-gradient(90deg,#22d3ee,#38bdf8);}
-div[data-testid="stColumn"]:nth-of-type(3) div[data-testid="stMetric"]::before{ background:linear-gradient(90deg,#34d399,#10b981);}
-div[data-testid="stColumn"]:nth-of-type(4) div[data-testid="stMetric"]::before{ background:linear-gradient(90deg,#fbbf24,#fb7185);}
-div[data-testid="stColumn"]:nth-of-type(1) div[data-testid="stMetricValue"]{ color:#c4b5fd !important;}
-div[data-testid="stColumn"]:nth-of-type(2) div[data-testid="stMetricValue"]{ color:#67e8f9 !important;}
-div[data-testid="stColumn"]:nth-of-type(3) div[data-testid="stMetricValue"]{ color:#6ee7b7 !important;}
-div[data-testid="stColumn"]:nth-of-type(4) div[data-testid="stMetricValue"]{ color:#fcd34d !important;}
+div[data-testid="stMetric"]::before{ content:""; position:absolute; top:0; left:0; right:0; height:3px; background:linear-gradient(90deg,#9b87f5,#5bbfb0); }
+
 div[data-testid="stMetricLabel"]{ color:var(--muted) !important; font-size:.78rem !important;
   text-transform:uppercase; letter-spacing:1.4px; font-weight:600; }
 div[data-testid="stMetricValue"]{ font-family:'Fraunces',serif !important;
-  font-weight:600 !important; font-size:2rem !important; }
+  font-weight:600 !important; font-size:2rem !important; color:#f4f4f5 !important; }
 
 /* Tabs */
 button[data-baseweb="tab"]{ font-weight:600; color:var(--muted); font-size:.95rem; }
-button[data-baseweb="tab"][aria-selected="true"]{ color:var(--violet) !important; }
-div[data-baseweb="tab-highlight"]{ background:linear-gradient(90deg,#7c5cff,#22d3ee) !important; height:3px; }
+button[data-baseweb="tab"][aria-selected="true"]{ color:var(--lilac) !important; }
+div[data-baseweb="tab-highlight"]{ background:linear-gradient(90deg,#9b87f5,#5bbfb0) !important; height:3px; }
 
 /* Inputs / tags */
 .stMultiSelect div[data-baseweb="select"]>div, .stDateInput input{
   background:var(--panel2); border-color:var(--line); border-radius:11px; }
-div[data-baseweb="tag"]{ background:linear-gradient(90deg,#7c5cff,#5b8def) !important;
-  border-radius:8px; border:none; }
+div[data-baseweb="tag"]{ background:#9b87f5 !important; border-radius:8px; border:none; }
 .stRadio [aria-checked="true"]{ }
 
 /* Caption + divider */
@@ -119,14 +107,14 @@ div[data-testid="stDataFrame"]{ border-radius:12px; overflow:hidden; border:1px 
 
 # Plotly theme applied per-chart via a helper
 PLOT_BG="rgba(0,0,0,0)"
-PALETTE=["#7c5cff","#22d3ee","#34d399","#fbbf24","#fb7185","#e879f9","#5b8def","#f59e0b","#2dd4bf","#c084fc"]
+PALETTE=["#9b87f5","#e8c468","#e87a90","#5bbfb0"]
 def style_fig(fig):
     fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
-                      font=dict(color="#cdd2e3", family="Outfit", size=13),
+                      font=dict(color="#c9c9d2", family="Outfit", size=13),
                       colorway=PALETTE, margin=dict(t=54,l=10,r=10,b=10),
                       legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=12)),
                       title=dict(font=dict(family="Fraunces", size=18, color="#eef0f7")),
-                      hoverlabel=dict(bgcolor="#1c2133", bordercolor="#2b3147",
+                      hoverlabel=dict(bgcolor="#1d1d22", bordercolor="#2a2a30",
                                       font=dict(family="Outfit", color="#eef0f7")))
     fig.update_xaxes(gridcolor="rgba(255,255,255,.05)", zerolinecolor="rgba(255,255,255,.08)",
                      linecolor="rgba(255,255,255,.12)")
@@ -313,9 +301,15 @@ except Exception:
 
 # ---------- sidebar ----------
 st.sidebar.title("Controls")
-metric=st.sidebar.radio("Metric",["subtotal","qty"],horizontal=True,
-                        format_func=lambda x:"Subtotal" if x=="subtotal" else "Units")
-mlab="Subtotal" if metric=="subtotal" else "Units"; agg=f"SUM({metric})"
+metric=st.sidebar.radio("Metric",["subtotal","qty","orders"],horizontal=True,
+                        format_func=lambda x:{"subtotal":"Subtotal","qty":"Units","orders":"Orders"}[x])
+_mlabels={"subtotal":"Subtotal","qty":"Units","orders":"Orders"}
+mlab=_mlabels[metric]
+# Orders = distinct invoices (reference_code); others are sums
+if metric=="orders":
+    agg=("COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)")
+else:
+    agg=f"SUM({metric})"
 dr=st.sidebar.date_input("Date range", value=(DMIN,DMAX), min_value=DMIN, max_value=DMAX)
 start,end=(dr if isinstance(dr,tuple) and len(dr)==2 else (DMIN,DMAX))
 
@@ -393,7 +387,7 @@ with T["📈 Trend"]:
     g=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="g")
     tr={"Daily":"day","Weekly":"week","Monthly":"month"}[g]
     df=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
-    plot(px.area(df,x="period",y="v",title=f"{g} {mlab}").update_traces(line_color="#7c5cff", fillcolor="rgba(124,92,255,0.25)").update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
+    plot(px.area(df,x="period",y="v",title=f"{g} {mlab}").update_traces(line_color="#9b87f5", fillcolor="rgba(155,135,245,0.22)").update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
 
 with T["🛒 Channel"]:
     gc=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="gchan")
@@ -429,7 +423,9 @@ with T["📦 SKUs"]:
     n=st.slider("Top N SKUs",5,50,15)
     namecol=next((c for c in LABEL if "name" in c.lower()),None)
     sel=f'sku, "{namecol}"' if namecol else "sku"
-    df=Q(f'SELECT {sel}, SUM(subtotal) rev, SUM(qty) units FROM joined WHERE {WHERE} GROUP BY {sel} ORDER BY {"rev" if metric=="subtotal" else "units"} DESC LIMIT {n}')
+    ord_expr=("COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)")
+    _orderby={"subtotal":"rev","qty":"units","orders":"orders"}[metric]
+    df=Q(f'SELECT {sel}, SUM(subtotal) rev, SUM(qty) units, {ord_expr} orders FROM joined WHERE {WHERE} GROUP BY {sel} ORDER BY {_orderby} DESC LIMIT {n}')
     st.dataframe(df,width='stretch')
 
 with T["🧮 Pivot"]:
