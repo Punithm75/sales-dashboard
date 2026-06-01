@@ -193,17 +193,17 @@ def classify(master: pd.DataFrame):
 
 # ---------- build a DuckDB connection that reads sales from disk + registers small master ----------
 @st.cache_resource(show_spinner="Preparing database…")
-def get_db():
-    """Returns (con, sales_cols). DuckDB reads the parquet/csv lazily from disk."""
+def build_everything():
+    """ONE source of truth: open connection, build sales view, join master, create joined view.
+    Returns (con, CAT, NUM, LABEL, MATCH, HAS_REF). Cached as a resource so the connection
+    and all its views are created together and stay in sync."""
     path=sales_file_path()
     con=duckdb.connect(":memory:")
-    # Create a VIEW over the file (does NOT load into memory; scans on demand)
     if path.endswith(".csv"):
         con.execute(f"CREATE VIEW sales_raw AS SELECT * FROM read_csv_auto('{path}')")
     else:
         con.execute(f"CREATE VIEW sales_raw AS SELECT * FROM read_parquet('{path}')")
     cols=[r[0] for r in con.execute("DESCRIBE sales_raw").fetchall()]
-    # detect canonical columns
     low={c.lower():c for c in cols}
     def pick(*cs):
         for x in cs:
@@ -214,45 +214,38 @@ def get_db():
     sku=pick("sku","sku_code")
     chan=pick("marketplaces","marketplace","channel","platform")
     dat=pick("date","order_date","txn_date")
-    # build a normalized view with canonical names + sku as text
+    ref=pick("reference_code","invoice_id","billing_id","order_id","invoice","bill_id")
     sel=[]
     sel.append(f"CAST({sku} AS VARCHAR) AS sku" if sku else "'' AS sku")
     sel.append(f"{rev} AS subtotal" if rev else "0.0 AS subtotal")
     sel.append(f"{qty} AS qty" if qty else "0 AS qty")
     sel.append(f"{chan} AS marketplaces" if chan else "'Unknown' AS marketplaces")
     sel.append(f"CAST({dat} AS DATE) AS date" if dat else "CURRENT_DATE AS date")
-    ref=pick("reference_code","invoice_id","billing_id","order_id","invoice","bill_id")
     sel.append(f"CAST({ref} AS VARCHAR) AS reference_code" if ref else "CAST(NULL AS VARCHAR) AS reference_code")
     con.execute(f"CREATE VIEW sales AS SELECT {', '.join(sel)}, "
                 f"EXTRACT(month FROM CAST({dat} AS DATE)) AS mon, "
                 f"EXTRACT(year FROM CAST({dat} AS DATE)) AS yr FROM sales_raw")
-    return con
+    has_ref = ref is not None
 
-@st.cache_data(ttl=3600)
-def setup():
-    """Register master into the db connection and create the joined view. Returns filter metadata."""
-    con=get_db()
     master=load_master()
     cat,num,label=classify(master)
     if master.empty:
-        con.execute("CREATE OR REPLACE VIEW joined AS SELECT *, FALSE AS _matched FROM sales")
-        return [],[],[],0.0
+        con.execute("CREATE VIEW joined AS SELECT *, FALSE AS _matched FROM sales")
+        return con,[],[],[],0.0,has_ref
     keep=["sku_code"]+cat+num+label
     keep=[c for c in keep if c in master.columns]
     m=master[keep].drop_duplicates("sku_code").copy()
     for c in num:
         if c in m.columns: m[c]=pd.to_numeric(m[c],errors="coerce")
     con.register("master_df", m)
-    con.execute("CREATE OR REPLACE VIEW joined AS "
-                "SELECT s.*, m.*, (m.sku_code IS NOT NULL) AS _matched "
+    con.execute("CREATE VIEW joined AS "
+                "SELECT s.*, m.* EXCLUDE(sku_code), (m.sku_code IS NOT NULL) AS _matched "
                 "FROM sales s LEFT JOIN master_df m ON s.sku = m.sku_code")
-    # match rate (cheap aggregate, not a full load)
     mr=con.execute("SELECT AVG(CASE WHEN _matched THEN 1.0 ELSE 0.0 END)*100 FROM joined").fetchone()[0]
-    return cat,num,label,(mr or 0.0)
+    return con,cat,num,label,(mr or 0.0),has_ref
 
 try:
-    CAT,NUM,LABEL,MATCH = setup()
-    con=get_db()
+    con,CAT,NUM,LABEL,MATCH,_HAS_REF = build_everything()
     # Promote product name & colour to filters even though they're high-cardinality labels
     def _promote_exact(targets):
         # prefer an exact (case-insensitive) column match; skip 'old' and 'category' variants
@@ -283,8 +276,6 @@ except Exception:
 def Q(sql): return con.execute(sql).df()
 
 # bounds for date picker (cheap min/max query)
-_cols_joined=[r[0] for r in con.execute("DESCRIBE joined").fetchall()]
-_HAS_REF=("reference_code" in _cols_joined)
 try:
     b=Q("SELECT min(date) lo, max(date) hi FROM sales").iloc[0]
     DMIN=pd.to_datetime(b.lo).date(); DMAX=pd.to_datetime(b.hi).date()
