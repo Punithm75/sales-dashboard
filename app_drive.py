@@ -292,6 +292,110 @@ except Exception:
 
 def Q(sql): return con.execute(sql).df()
 
+# ---------- AI assistant (Gemini text-to-SQL, optional) ----------
+# Natural language -> DuckDB SQL over the `joined` view. We send the model only the
+# SCHEMA (column names/types) + the question -- never the data rows -- run the SQL
+# locally, then (best-effort) ask the model to phrase the answer. Stays dynamic: the
+# schema is read live from `joined`, so new master columns are usable with zero code change.
+import re
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY","")
+GEMINI_MODEL   = st.secrets.get("GEMINI_MODEL","gemini-2.0-flash")
+AI_ROW_CAP     = 5000   # hard cap on rows an AI query may materialise (memory safety)
+
+_SQL_SYS = (
+ "You are a senior analytics engineer. Translate the user's question into ONE DuckDB SQL "
+ "query over a single view named \"joined\". Return ONLY the SQL -- no prose, no markdown.\n\n"
+ "HARD RULES:\n"
+ "- Read-only: a single SELECT (optionally a leading WITH ...). Never use "
+ "INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/ATTACH/COPY/PRAGMA or any file-reading function.\n"
+ "- Query ONLY the view \"joined\". Use ONLY the columns listed below -- never invent columns.\n"
+ "- DuckDB dialect.\n"
+ "- Use these exact metric definitions so results match the dashboard:\n"
+ "    revenue / subtotal = SUM(subtotal)      -- amounts are Indian Rupees (INR)\n"
+ "    units              = SUM(qty)\n"
+ "    orders             = COUNT(DISTINCT reference_code)   -- distinct invoices\n"
+ "- \"marketplaces\" is the sales channel. \"date\" is a DATE; \"mon\"/\"yr\" are its month/year.\n"
+ "- Alias every aggregate with a clear, human-readable name.\n"
+ "- For 'top N' use ORDER BY <measure> DESC LIMIT N. Keep result sets small.\n"
+ "- If the question is ambiguous, choose a sensible interpretation.\n\n"
+ "Columns of \"joined\" (name : type):\n{schema_lines}\n\nData spans {DMIN} to {DMAX}."
+)
+_ANS_SYS = (
+ "You are a concise analyst for an Indian D2C activewear brand. Given the user's question and the "
+ "query result as CSV, answer in 1-3 sentences of plain English. Show money with the rupee symbol "
+ "(₹) and thousands separators; show counts with thousands separators. Do not output SQL or "
+ "tables. If the result is empty, say that no data matched."
+)
+
+@st.cache_data(ttl=3600)
+def ai_schema():
+    try:
+        return [(r[0],r[1]) for r in con.execute("DESCRIBE joined").fetchall()]
+    except Exception:
+        return []
+
+def _gemini(prompt, system=None, temperature=0.1, timeout=45):
+    import requests
+    url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    body={"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":temperature}}
+    if system: body["systemInstruction"]={"parts":[{"text":system}]}
+    r=requests.post(url,headers={"x-goog-api-key":GEMINI_API_KEY,"Content-Type":"application/json"},
+                    json=body,timeout=timeout)
+    if r.status_code!=200:
+        raise RuntimeError(f"Gemini API {r.status_code}: {r.text[:200]}")
+    cands=r.json().get("candidates",[])
+    if not cands: raise RuntimeError(str(r.json().get("promptFeedback") or "No response from model"))
+    return "".join(p.get("text","") for p in cands[0].get("content",{}).get("parts",[])).strip()
+
+def _extract_sql(text):
+    m=re.search(r"```(?:sql)?\s*(.*?)```",text,re.S|re.I)
+    return (m.group(1) if m else text).strip().rstrip(";").strip()
+
+_AI_FORBIDDEN=re.compile(
+ r"\b(attach|detach|copy|insert|update|delete|drop|create|alter|pragma|install|load|export|import|"
+ r"call|truncate|grant|revoke|vacuum|checkpoint|read_csv|read_csv_auto|read_parquet|read_json|"
+ r"read_json_auto|read_text|read_blob|parquet_scan|csv_scan|glob|sniff_csv)\b",re.I)
+def _safe_select(sql):
+    low=sql.lower().lstrip()
+    if not (low.startswith("select") or low.startswith("with")): return False  # SELECT/WITH only
+    if ";" in sql.strip().rstrip(";"): return False                            # no stacked statements
+    if "joined" not in low: return False                                       # must query our view
+    if _AI_FORBIDDEN.search(sql): return False                                 # no DDL/DML/file access
+    return True
+
+def _fmt(v):
+    try:
+        f=float(v); return f"{f:,.0f}" if f==int(f) else f"{f:,.2f}"
+    except Exception:
+        return v
+
+def _auto_chart(df):
+    if df is None or df.empty or df.shape[1]<2 or len(df)>200: return None
+    num=[c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    if not num: return None
+    y=num[-1]; dims=[c for c in df.columns if c!=y]
+    if not dims: return None
+    x=dims[0]
+    if pd.api.types.is_datetime64_any_dtype(df[x]): return px.line(df,x=x,y=y,markers=True)
+    if len(df)<=30: return px.bar(df.sort_values(y,ascending=False),x=x,y=y,text_auto=".2s")
+    return None
+
+def _render_result(df):
+    if df is None: return
+    if getattr(df,"empty",False): st.info("No rows matched that question."); return
+    if df.shape==(1,1) and pd.api.types.is_numeric_dtype(df.iloc[:,0]):
+        st.metric(str(df.columns[0]),_fmt(df.iloc[0,0])); return
+    try:
+        num=[c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+        st.dataframe(df.style.format({c:_fmt for c in num}) if num else df,width='stretch')
+    except Exception:
+        st.dataframe(df,width='stretch')
+    try:
+        fig=_auto_chart(df)
+        if fig is not None: plot(fig,width='stretch')
+    except Exception:
+        pass
+
 # bounds for date picker (cheap min/max query)
 try:
     b=Q("SELECT min(date) lo, max(date) hi FROM sales").iloc[0]
@@ -380,7 +484,7 @@ except Exception:
     st.error("Could not compute KPIs."); st.code(traceback.format_exc())
 st.divider()
 
-tabs=["📈 Trend","🛒 Channel"]+(["🧩 By Attribute"] if CAT else [])+["🔀 Compare","📦 SKUs","🧮 Pivot"]
+tabs=["📈 Trend","🛒 Channel"]+(["🧩 By Attribute"] if CAT else [])+["🔀 Compare","📦 SKUs","🧮 Pivot","🤖 Ask AI"]
 T=dict(zip(tabs, st.tabs(tabs)))
 
 with T["📈 Trend"]:
@@ -461,3 +565,59 @@ with T["🧮 Pivot"]:
         st.caption(f"{len(piv):,} rows · {len(piv.columns)-1} columns")
         st.dataframe(piv.style.format("{:,.0f}"),width='stretch',height=480)
         st.download_button("Download CSV",piv.to_csv().encode(),"pivot.csv","text/csv")
+
+with T["🤖 Ask AI"]:
+    st.subheader("🤖 Ask AI")
+    if not GEMINI_API_KEY:
+        st.info(
+            "**Assistant is off.** Add a Gemini API key to switch it on. In `.streamlit/secrets.toml`:\n\n"
+            "```toml\nGEMINI_API_KEY = \"your-key-here\"\n"
+            "# optional, defaults to gemini-2.0-flash\nGEMINI_MODEL = \"gemini-2.0-flash\"\n```\n\n"
+            "The key is read from `st.secrets` (gitignored) — never paste it into the code. Rerun after saving.")
+    else:
+        st.caption("Ask in plain English — questions are translated to SQL and run on your live data. "
+                   "Aggregates use the dashboard's definitions (Subtotal · Units · Orders). "
+                   "Note: the sidebar filters are not applied here — mention the period/segment in your question.")
+        if "ai_msgs" not in st.session_state: st.session_state["ai_msgs"]=[]
+
+        for turn in st.session_state["ai_msgs"]:
+            with st.chat_message("user"): st.markdown(turn["q"])
+            with st.chat_message("assistant"):
+                if turn.get("error"): st.error(turn["error"])
+                else:
+                    if turn.get("answer"): st.markdown(turn["answer"])
+                    _render_result(turn.get("df"))
+                if turn.get("sql"):
+                    with st.expander("Show SQL"): st.code(turn["sql"],language="sql")
+
+        pending=None
+        examples=["Top 10 SKUs by revenue","Monthly revenue trend in 2025",
+                  "Revenue share by channel","Total units sold"]
+        ecols=st.columns(len(examples))
+        for i,e in enumerate(examples):
+            if ecols[i].button(e,key=f"ai_ex_{i}"): pending=e
+        with st.form("ai_form",clear_on_submit=True):
+            qin=st.text_input("Your question",placeholder="e.g. Which colour sold the most units last month?")
+            if st.form_submit_button("Ask") and qin.strip(): pending=qin.strip()
+
+        if pending:
+            turn={"q":pending}
+            with st.spinner("Thinking…"):
+                try:
+                    sl="\n".join(f"  {n} : {t}" for n,t in ai_schema())
+                    sql=_extract_sql(_gemini(pending,system=_SQL_SYS.format(schema_lines=sl,DMIN=DMIN,DMAX=DMAX)))
+                    turn["sql"]=sql
+                    if not _safe_select(sql):
+                        turn["error"]="That request didn't produce a safe read-only SELECT. Try rephrasing."
+                    else:
+                        turn["df"]=Q(f"SELECT * FROM ({sql}) AS _ai LIMIT {AI_ROW_CAP}")
+                        try:
+                            turn["answer"]=_gemini(
+                                f"Question: {pending}\n\nResult (CSV):\n{turn['df'].head(50).to_csv(index=False)}",
+                                system=_ANS_SYS)
+                        except Exception:
+                            turn["answer"]=None
+                except Exception as e:
+                    turn["error"]=f"AI request failed: {e}"
+            st.session_state["ai_msgs"].append(turn)
+            st.rerun()
