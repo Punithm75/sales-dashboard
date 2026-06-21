@@ -299,7 +299,7 @@ def Q(sql): return con.execute(sql).df()
 # schema is read live from `joined`, so new master columns are usable with zero code change.
 import re
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY","")
-GEMINI_MODEL   = st.secrets.get("GEMINI_MODEL","gemini-2.0-flash")
+GEMINI_MODEL   = st.secrets.get("GEMINI_MODEL","gemini-2.0-flash-lite")  # flash-lite = most generous free tier
 AI_ROW_CAP     = 5000   # hard cap on rows an AI query may materialise (memory safety)
 
 _SQL_SYS = (
@@ -334,22 +334,54 @@ def ai_schema():
     except Exception:
         return []
 
-def _gemini(prompt, system=None, temperature=0.1, timeout=45):
-    import requests
+def _gemini(prompt, system=None, temperature=0.1, timeout=45, _tries=3):
+    """POST to Gemini. Caps output and disables 'thinking' tokens (the big hidden output-token cost on
+    flash thinking-models — a simple task can otherwise burn thousands), so each call stays cheap.
+    Retries transient (per-minute) 429/503 with backoff, never retries a per-day quota, and surfaces
+    a clear, actionable message instead of a raw 429."""
+    import requests, time, json as _json
     url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-    body={"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":temperature}}
+    gen={"temperature":temperature,"maxOutputTokens":1024,"thinkingConfig":{"thinkingBudget":0}}
+    body={"contents":[{"parts":[{"text":prompt}]}],"generationConfig":gen}
     if system: body["systemInstruction"]={"parts":[{"text":system}]}
-    r=requests.post(url,headers={"x-goog-api-key":GEMINI_API_KEY,"Content-Type":"application/json"},
-                    json=body,timeout=timeout)
-    if r.status_code!=200:
-        raise RuntimeError(f"Gemini API {r.status_code}: {r.text[:200]}")
-    cands=r.json().get("candidates",[])
-    if not cands: raise RuntimeError(str(r.json().get("promptFeedback") or "No response from model"))
-    return "".join(p.get("text","") for p in cands[0].get("content",{}).get("parts",[])).strip()
+    for attempt in range(_tries):
+        r=requests.post(url,headers={"x-goog-api-key":GEMINI_API_KEY,"Content-Type":"application/json"},
+                        json=body,timeout=timeout)
+        if r.status_code==200:
+            cands=r.json().get("candidates",[])
+            if not cands: raise RuntimeError(str(r.json().get("promptFeedback") or "No response from model"))
+            return "".join(p.get("text","") for p in cands[0].get("content",{}).get("parts",[])).strip()
+        delay,per_day,emsg=None,False,r.text
+        try:                                   # dig the exact quota + suggested wait out of the error body
+            err=_json.loads(r.text).get("error",{}); emsg=err.get("message",r.text)
+            for d in err.get("details",[]):
+                if "RetryInfo" in d.get("@type","") and d.get("retryDelay"):
+                    try: delay=float(str(d["retryDelay"]).rstrip("s"))
+                    except Exception: pass
+                if "QuotaFailure" in d.get("@type","") and any("PerDay" in v.get("quotaId","") for v in d.get("violations",[])):
+                    per_day=True
+        except Exception: pass
+        if r.status_code==400 and "thinking" in emsg.lower() and "thinkingConfig" in gen:
+            gen.pop("thinkingConfig",None); continue                       # model doesn't accept the flag -> drop & retry
+        if r.status_code in (429,503) and not per_day and attempt<_tries-1:
+            time.sleep(min(delay or 2*(attempt+1), 12)); continue          # transient -> back off and retry
+        if r.status_code==429:
+            why=("daily free-tier quota is used up — resets ~midnight US-Pacific" if per_day
+                 else "per-minute rate limit hit — wait a moment, ask one question at a time")
+            raise RuntimeError(f"quota exceeded (429): {why}. Model '{GEMINI_MODEL}'. Options: switch to "
+                               f"gemini-2.0-flash-lite, slow down, or enable billing (new Google Cloud "
+                               f"accounts get free credit). [{emsg[:150]}]")
+        raise RuntimeError(f"Gemini API {r.status_code}: {emsg[:300]}")
+    raise RuntimeError("Gemini API: still rate-limited after retries — wait a minute and ask one question.")
 
 def _extract_sql(text):
     m=re.search(r"```(?:sql)?\s*(.*?)```",text,re.S|re.I)
     return (m.group(1) if m else text).strip().rstrip(";").strip()
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _gen_sql(question, schema_lines):
+    # cached: repeating a question (or re-clicking an example chip) costs zero extra Gemini calls
+    return _extract_sql(_gemini(question, system=_SQL_SYS.format(schema_lines=schema_lines, DMIN=DMIN, DMAX=DMAX)))
 
 _AI_FORBIDDEN=re.compile(
  r"\b(attach|detach|copy|insert|update|delete|drop|create|alter|pragma|install|load|export|import|"
@@ -572,7 +604,7 @@ with T["🤖 Ask AI"]:
         st.info(
             "**Assistant is off.** Add a Gemini API key to switch it on. In `.streamlit/secrets.toml`:\n\n"
             "```toml\nGEMINI_API_KEY = \"your-key-here\"\n"
-            "# optional, defaults to gemini-2.0-flash\nGEMINI_MODEL = \"gemini-2.0-flash\"\n```\n\n"
+            "# optional, defaults to gemini-2.0-flash-lite\nGEMINI_MODEL = \"gemini-2.0-flash-lite\"\n```\n\n"
             "The key is read from `st.secrets` (gitignored) — never paste it into the code. Rerun after saving.")
     else:
         st.caption("Ask in plain English — questions are translated to SQL and run on your live data. "
@@ -596,6 +628,8 @@ with T["🤖 Ask AI"]:
         ecols=st.columns(len(examples))
         for i,e in enumerate(examples):
             if ecols[i].button(e,key=f"ai_ex_{i}"): pending=e
+        explain=st.checkbox("Also write a one-line answer (uses a 2nd request)",value=True,
+                            help="Turn off to spend only one Gemini request per question — useful on the free tier.")
         with st.form("ai_form",clear_on_submit=True):
             qin=st.text_input("Your question",placeholder="e.g. Which colour sold the most units last month?")
             if st.form_submit_button("Ask") and qin.strip(): pending=qin.strip()
@@ -605,18 +639,19 @@ with T["🤖 Ask AI"]:
             with st.spinner("Thinking…"):
                 try:
                     sl="\n".join(f"  {n} : {t}" for n,t in ai_schema())
-                    sql=_extract_sql(_gemini(pending,system=_SQL_SYS.format(schema_lines=sl,DMIN=DMIN,DMAX=DMAX)))
+                    sql=_gen_sql(pending, sl)                       # cached + retries transient throttling
                     turn["sql"]=sql
                     if not _safe_select(sql):
                         turn["error"]="That request didn't produce a safe read-only SELECT. Try rephrasing."
                     else:
                         turn["df"]=Q(f"SELECT * FROM ({sql}) AS _ai LIMIT {AI_ROW_CAP}")
-                        try:
-                            turn["answer"]=_gemini(
-                                f"Question: {pending}\n\nResult (CSV):\n{turn['df'].head(50).to_csv(index=False)}",
-                                system=_ANS_SYS)
-                        except Exception:
-                            turn["answer"]=None
+                        if explain:                                 # optional 2nd call — skip to save quota
+                            try:
+                                turn["answer"]=_gemini(
+                                    f"Question: {pending}\n\nResult (CSV):\n{turn['df'].head(50).to_csv(index=False)}",
+                                    system=_ANS_SYS)
+                            except Exception:
+                                turn["answer"]=None
                 except Exception as e:
                     turn["error"]=f"AI request failed: {e}"
             st.session_state["ai_msgs"].append(turn)
