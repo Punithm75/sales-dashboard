@@ -135,7 +135,8 @@ def check_password():
 if st.secrets.get("APP_PASSWORD",""):
     check_password()
 
-DRIVE_FILE_ID    = st.secrets.get("DRIVE_FILE_ID","")
+DRIVE_FILE_ID    = st.secrets.get("DRIVE_FILE_ID","")     # single online file (fallback / back-compat)
+DRIVE_FOLDER_ID  = st.secrets.get("DRIVE_FOLDER_ID","")   # folder of sales files to union (online + retail)
 MASTER_SHEET_ID  = st.secrets.get("MASTER_SHEET_ID","")
 MASTER_SHEET_TAB = st.secrets.get("MASTER_SHEET_TAB","Master SKU")
 
@@ -212,41 +213,155 @@ def classify(master: pd.DataFrame):
         else: label.append(c)
     return cat,num,label
 
+# ---------- list ALL sales files in the Drive folder (online parquet + retail CSVs) ----------
+@st.cache_data(ttl=3600, show_spinner="Loading sales data…")
+def sales_files():
+    """Return [(local_path, source_type)] for every sales file to union.
+    Priority: DRIVE_FOLDER_ID (list+download all) > DRIVE_FILE_ID (single) > local sample.
+    source_type is 'online' (parquet) or 'retail' (csv). The master Google Sheet is skipped."""
+    def kind_for(p): return "retail" if p.lower().endswith(".csv") else "online"
+    if not DRIVE_FOLDER_ID:                                  # back-compat: single file / local
+        p = sales_file_path() if DRIVE_FILE_ID else SALES_LOCAL.as_posix()
+        return [(p, kind_for(p))]
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseDownload
+    info=dict(st.secrets["gcp_service_account"])
+    creds=service_account.Credentials.from_service_account_info(
+        info, scopes=["https://www.googleapis.com/auth/drive.readonly"])
+    svc=build("drive","v3",credentials=creds)
+    items, token = [], None
+    while True:                                              # list folder (paginated)
+        resp=svc.files().list(
+            q=f"'{DRIVE_FOLDER_ID}' in parents and trashed=false",
+            fields="nextPageToken, files(id,name,mimeType)",
+            pageSize=1000, pageToken=token,
+            supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+        items+=resp.get("files",[]); token=resp.get("nextPageToken")
+        if not token: break
+    out=[]; tmp=Path(tempfile.gettempdir())
+    for f in items:
+        name=f.get("name","").lower(); mt=f.get("mimeType","")
+        if mt.startswith("application/vnd.google-apps"): continue          # native Sheet (master) -> skip
+        if name.endswith(".parquet") or "parquet" in mt:   kind="online"
+        elif name.endswith(".csv") or mt in ("text/csv","application/csv"): kind="retail"
+        else: continue                                                     # xlsx / other -> skip
+        dst=tmp/f"sales_{f['id']}"                                         # distinct temp path per Drive id
+        req=svc.files().get_media(fileId=f["id"])
+        with io.FileIO(dst,"wb") as fh:
+            dl=MediaIoBaseDownload(fh,req); done=False
+            while not done: _,done=dl.next_chunk()
+        out.append((dst.as_posix(), kind))
+    if not out:                                              # empty/blocked folder -> local fallback
+        p=SALES_LOCAL.as_posix(); return [(p, kind_for(p))]
+    return out
+
+def _canon_online(con, raw, tag):
+    """Map an online sales file (parquet/csv) to the canonical 7 columns via fuzzy pick().
+    If the file has no invoice/reference column, synthesise a unique one so that
+    Orders = COUNT(DISTINCT reference_code) preserves the prior per-row count semantics."""
+    low={r[0].lower():r[0] for r in con.execute("DESCRIBE "+raw).fetchall()}
+    def pick(*cs):
+        for x in cs:
+            if x in low: return low[x]
+        return None
+    rev=pick("subtotal","revenue","sales","amount","gmv"); qty=pick("qty","quantity","units")
+    sku=pick("sku","sku_code","product_code"); chan=pick("marketplaces","marketplace","channel","platform")
+    dat=pick("date","order_date","txn_date")
+    ref=pick("reference_code","invoice_id","billing_id","order_id","invoice","bill_id")
+    sku_e =('CAST("'+sku+'" AS VARCHAR)')  if sku  else "''"
+    rev_e =('CAST("'+rev+'" AS DOUBLE)')   if rev  else "0.0"
+    qty_e =('CAST("'+qty+'" AS DOUBLE)')   if qty  else "0.0"
+    chan_e=('CAST("'+chan+'" AS VARCHAR)') if chan else "'Unknown'"
+    dat_e =('CAST("'+dat+'" AS DATE)')     if dat  else "CURRENT_DATE"
+    ref_e =('CAST("'+ref+'" AS VARCHAR)')  if ref  else ("'on"+str(tag)+"_' || CAST(ROW_NUMBER() OVER () AS VARCHAR)")
+    sql=("SELECT "+sku_e+" AS sku, "+rev_e+" AS subtotal, "+qty_e+" AS qty, "
+         +chan_e+" AS marketplaces, "+dat_e+" AS date, "+ref_e+" AS reference_code, "
+         "CAST(NULL AS VARCHAR) AS store FROM "+raw)
+    return sql, (ref is not None)
+
+def _canon_retail(con, raw, tag):
+    """Map a messy POS retail CSV (read as all-VARCHAR) to the canonical 7 columns.
+    Cleans Indian-formatted money/qty text, parses DD-Mon-YY dates, nets out SR/IR
+    returns, forces channel 'Retail', and keeps the store as an attribute."""
+    low={r[0].lower().strip():r[0] for r in con.execute("DESCRIBE "+raw).fetchall()}
+    def pick(*cs):
+        for x in cs:
+            k=x.lower().strip()
+            if k in low: return low[k]
+        return None
+    sku=pick("Product Code","sku","sku_code")
+    ref=pick("Invoice No","invoice_no","reference_code","bill_no","invoice")
+    dat=pick("Invoice Date","invoice_date","date","bill_date")
+    qty=pick("Total Sales Qty","qty","quantity","units")
+    val=pick("Nett Invoice Value","net invoice value","subtotal","net_amount","amount")
+    typ=pick("Sales Transaction Type (IV/SR/IR)","sales transaction type","transaction type")
+    sto=pick("Invoice Associate Short Name","Franchisee Name","Store Bucket","store","location")
+    if not (sku and ref and dat and qty and val):
+        raise RuntimeError("retail file missing required columns (Product Code / Invoice No / Invoice Date / Total Sales Qty / Nett Invoice Value)")
+    def numexpr(col):                                        # " 1,599 "->1599 ; " - "->0 ; keep real negatives
+        c='TRIM("'+col+'")'
+        return ("TRY_CAST(CASE WHEN regexp_full_match("+c+",'[-–— ]*') THEN '0' "
+                "ELSE NULLIF(regexp_replace("+c+",'[, ]','','g'),'') END AS DOUBLE)")
+    dexpr="TRY_CAST(strptime(NULLIF(TRIM(\""+dat+"\"),''),'%d-%b-%y') AS DATE)"
+    tsign=("CASE upper(trim(\""+typ+"\")) WHEN 'SR' THEN -1.0 WHEN 'IR' THEN -1.0 ELSE 1.0 END") if typ else "1.0"
+    store_e=("NULLIF(TRIM(\""+sto+"\"),'')") if sto else "CAST(NULL AS VARCHAR)"
+    # ABS(value) * type-sign: IV adds, SR/IR subtract -- correct whether the source stores returns as +ve or -ve
+    sql=("SELECT NULLIF(TRIM(\""+sku+"\"),'') AS sku, "
+         "ABS(COALESCE("+numexpr(val)+",0))*("+tsign+") AS subtotal, "
+         "ABS(COALESCE("+numexpr(qty)+",0))*("+tsign+") AS qty, "
+         "'Retail' AS marketplaces, "
+         +dexpr+" AS date, "
+         "NULLIF(TRIM(\""+ref+"\"),'') AS reference_code, "
+         +store_e+" AS store "
+         "FROM "+raw+" "
+         "WHERE NULLIF(TRIM(\""+sku+"\"),'') IS NOT NULL "
+         "AND NULLIF(TRIM(\""+ref+"\"),'') IS NOT NULL "
+         "AND "+dexpr+" IS NOT NULL")
+    return sql, True
+
 # ---------- build a DuckDB connection that reads sales from disk + registers small master ----------
 @st.cache_resource(show_spinner="Preparing database…")
 def build_everything():
     """ONE source of truth: open connection, build sales view, join master, create joined view.
     Returns (con, CAT, NUM, LABEL, MATCH, HAS_REF). Cached as a resource so the connection
     and all its views are created together and stay in sync."""
-    path=sales_file_path()
+    files=sales_files()
     con=duckdb.connect(":memory:")
-    if path.endswith(".csv"):
-        con.execute(f"CREATE VIEW sales_raw AS SELECT * FROM read_csv_auto('{path}')")
+    online,retail,skipped=[],[],[]
+    for i,(path,kind) in enumerate(files):
+        raw=f"src_raw_{i}"
+        try:
+            if kind=="retail":
+                con.execute(f"CREATE VIEW {raw} AS SELECT * FROM read_csv_auto('{path}', header=true, all_varchar=true, ignore_errors=true)")
+                retail.append(_canon_retail(con, raw, i)[0])
+            elif path.lower().endswith(".csv"):
+                con.execute(f"CREATE VIEW {raw} AS SELECT * FROM read_csv_auto('{path}')")
+                online.append(_canon_online(con, raw, i)[0])
+            else:
+                con.execute(f"CREATE VIEW {raw} AS SELECT * FROM read_parquet('{path}')")
+                online.append(_canon_online(con, raw, i)[0])
+        except Exception as e:
+            skipped.append((path, str(e)[:200]))
+    if skipped: st.session_state["_skipped_files"]=skipped
+
+    # canonical online rows + retail rows (retail de-duped by invoice+sku so re-uploaded periods don't double-count)
+    parts=[f"SELECT * FROM ({s})" for s in online]
+    if retail:
+        runion=" UNION ALL ".join(f"SELECT * FROM ({s})" for s in retail)
+        parts.append("SELECT sku,subtotal,qty,marketplaces,date,reference_code,store FROM ("
+                     "SELECT *, ROW_NUMBER() OVER (PARTITION BY reference_code, sku ORDER BY date DESC) AS _rn "
+                     f"FROM ({runion})) WHERE _rn=1")
+    has_ref=bool(parts)
+    if not parts:                                            # nothing usable -> empty typed view, app still renders
+        con.execute("CREATE VIEW sales AS SELECT CAST('' AS VARCHAR) sku, CAST(0.0 AS DOUBLE) subtotal, "
+                    "CAST(0.0 AS DOUBLE) qty, CAST('' AS VARCHAR) marketplaces, CAST(CURRENT_DATE AS DATE) date, "
+                    "CAST(NULL AS VARCHAR) reference_code, CAST(NULL AS VARCHAR) store, "
+                    "CAST(NULL AS INTEGER) mon, CAST(NULL AS INTEGER) yr WHERE 1=0")
     else:
-        con.execute(f"CREATE VIEW sales_raw AS SELECT * FROM read_parquet('{path}')")
-    cols=[r[0] for r in con.execute("DESCRIBE sales_raw").fetchall()]
-    low={c.lower():c for c in cols}
-    def pick(*cs):
-        for x in cs:
-            if x in low: return low[x]
-        return None
-    rev=pick("subtotal","revenue","sales","amount","gmv")
-    qty=pick("qty","quantity","units")
-    sku=pick("sku","sku_code")
-    chan=pick("marketplaces","marketplace","channel","platform")
-    dat=pick("date","order_date","txn_date")
-    ref=pick("reference_code","invoice_id","billing_id","order_id","invoice","bill_id")
-    sel=[]
-    sel.append(f"CAST({sku} AS VARCHAR) AS sku" if sku else "'' AS sku")
-    sel.append(f"{rev} AS subtotal" if rev else "0.0 AS subtotal")
-    sel.append(f"{qty} AS qty" if qty else "0 AS qty")
-    sel.append(f"{chan} AS marketplaces" if chan else "'Unknown' AS marketplaces")
-    sel.append(f"CAST({dat} AS DATE) AS date" if dat else "CURRENT_DATE AS date")
-    sel.append(f"CAST({ref} AS VARCHAR) AS reference_code" if ref else "CAST(NULL AS VARCHAR) AS reference_code")
-    con.execute(f"CREATE VIEW sales AS SELECT {', '.join(sel)}, "
-                f"EXTRACT(month FROM CAST({dat} AS DATE)) AS mon, "
-                f"EXTRACT(year FROM CAST({dat} AS DATE)) AS yr FROM sales_raw")
-    has_ref = ref is not None
+        con.execute("CREATE VIEW sales_raw AS "+" UNION ALL ".join(parts))
+        con.execute("CREATE VIEW sales AS SELECT sku, subtotal, qty, marketplaces, date, reference_code, store, "
+                    "EXTRACT(month FROM date) AS mon, EXTRACT(year FROM date) AS yr FROM sales_raw")
 
     master=load_master()
     cat,num,label=classify(master)
@@ -451,11 +566,16 @@ def distinct(col):
 
 selected={}
 _all_ch=distinct("marketplaces")
-_default_ch=[c for c in _all_ch if c.lower().strip() not in ("internal","retail")]
+_default_ch=[c for c in _all_ch if c.lower().strip() not in ("internal",)]  # Retail is a first-class channel now -> on by default
 ch=st.sidebar.multiselect("Channel", _all_ch, default=_default_ch)
 # If user clears all, treat as "all selected" so the dashboard isn't empty
 if ch: selected["marketplaces"]=ch
 elif _all_ch and not ch: selected["marketplaces"]=_default_ch
+# Store filter — only the retail source populates `store`; appears when retail data is present
+_stores=distinct("store")
+if _stores:
+    sv=st.sidebar.multiselect("Store (retail)", _stores)
+    if sv: selected["store"]=sv
 if CAT:
     st.sidebar.markdown("**Product filters**")
     for c in CAT[:6]:
