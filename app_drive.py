@@ -608,16 +608,16 @@ for col,vals in selected.items():
         wheres.append(sin(col,vals))
 WHERE=" AND ".join(wheres)
 
-# ---------- header + KPIs ----------
-# ---- Logo header ----
-st.markdown(
-    f'<div style="margin:0 0 6px 0;">'
-    f'<img src="data:image/png;base64,{LOGO_B64}" style="height:46px;"/>'
-    f'</div>',
-    unsafe_allow_html=True)
-st.title("D2C Sales Dashboard")
-active=[f"{k}: {', '.join(v)}" for k,v in selected.items() if not k.startswith('__num__')]
-st.caption(f"{mlab} · {start} → {end}"+(" · "+" · ".join(active) if active else ""))
+# ---------- header (title left, logo right) ----------
+hL, hR = st.columns([5,1], vertical_alignment="center")
+with hL:
+    st.title("D2C Sales Dashboard")
+    active=[f"{k}: {', '.join(v)}" for k,v in selected.items() if not k.startswith('__num__')]
+    st.caption(f"{mlab} · {start} → {end}"+(" · "+" · ".join(active) if active else ""))
+with hR:
+    st.markdown(
+        f'<div style="text-align:right;"><img src="data:image/png;base64,{LOGO_B64}" style="height:48px;"/></div>',
+        unsafe_allow_html=True)
 if not CAT:
     merr=st.session_state.get("_master_error","")
     if merr: st.info(f"Master sheet not loaded ({'permission — share the sheet with the service account' if 'ermission' in merr or '403' in merr else merr}). Showing sales-only views.")
