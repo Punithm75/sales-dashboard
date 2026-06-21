@@ -554,6 +554,9 @@ st.sidebar.markdown(
     f'<img src="data:image/png;base64,{LOGO_B64}" style="width:100%;max-width:200px;margin:2px 0 14px;"/>',
     unsafe_allow_html=True)
 st.sidebar.title("Controls")
+if st.sidebar.button("🧹 Clear all filters"):       # resets every filter (date, channel, store, product); keeps the metric
+    for _k in [k for k in st.session_state if k.startswith("f_")]: del st.session_state[_k]
+    st.rerun()
 metric=st.sidebar.radio("Metric",["subtotal","qty","orders"],horizontal=True,
                         format_func=lambda x:{"subtotal":"Subtotal","qty":"Units","orders":"Orders"}[x])
 _mlabels={"subtotal":"Subtotal","qty":"Units","orders":"Orders"}
@@ -563,7 +566,7 @@ if metric=="orders":
     agg=("COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)")
 else:
     agg=f"SUM({metric})"
-dr=st.sidebar.date_input("Date range", value=(DMIN,DMAX), min_value=DMIN, max_value=DMAX)
+dr=st.sidebar.date_input("Date range", value=(DMIN,DMAX), min_value=DMIN, max_value=DMAX, key="f_dates")
 start,end=(dr if isinstance(dr,tuple) and len(dr)==2 else (DMIN,DMAX))
 
 def distinct(col):
@@ -575,30 +578,30 @@ def distinct(col):
 selected={}
 _all_ch=distinct("marketplaces")
 _default_ch=[c for c in _all_ch if c.lower().strip() not in ("internal",)]  # Retail is a first-class channel now -> on by default
-ch=st.sidebar.multiselect("Channel", _all_ch, default=_default_ch)
+ch=st.sidebar.multiselect("Channel", _all_ch, default=_default_ch, key="f_ch")
 # If user clears all, treat as "all selected" so the dashboard isn't empty
 if ch: selected["marketplaces"]=ch
 elif _all_ch and not ch: selected["marketplaces"]=_default_ch
 # Store filter — only the retail source populates `store`; appears when retail data is present
 _stores=distinct("store")
 if _stores:
-    sv=st.sidebar.multiselect("Store (retail)", _stores)
+    sv=st.sidebar.multiselect("Store (retail)", _stores, key="f_store")
     if sv: selected["store"]=sv
 if CAT:
     st.sidebar.markdown("**Product filters**")
     for c in CAT[:6]:
-        v=st.sidebar.multiselect(c, distinct(c))
+        v=st.sidebar.multiselect(c, distinct(c), key=f"f_cat_{c}")
         if v: selected[c]=v
     if CAT[6:] or NUM:
         with st.sidebar.expander("More filters"):
             for c in CAT[6:]:
-                v=st.multiselect(c, distinct(c))
+                v=st.multiselect(c, distinct(c), key=f"f_cat_{c}")
                 if v: selected[c]=v
             for c in NUM:
                 try:
                     r=con.execute(f'SELECT min("{c}") lo, max("{c}") hi FROM joined').fetchone()
                     if r and r[0] is not None and r[1] is not None and r[0]<r[1]:
-                        rng=st.slider(c, float(r[0]), float(r[1]), (float(r[0]),float(r[1])))
+                        rng=st.slider(c, float(r[0]), float(r[1]), (float(r[0]),float(r[1])), key=f"f_num_{c}")
                         selected["__num__"+c]=rng
                 except Exception: pass
 
@@ -646,13 +649,13 @@ with T["📈 Trend"]:
     g=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="g")
     tr={"Daily":"day","Weekly":"week","Monthly":"month"}[g]
     df=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
-    plot(px.area(df,x="period",y="v",title=f"{g} {mlab}").update_traces(line_color="#6366f1", fillcolor="rgba(99,102,241,0.12)").update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
+    plot(px.area(df,x="period",y="v",text="v",title=f"{g} {mlab}").update_traces(line_color="#6366f1", fillcolor="rgba(99,102,241,0.12)", texttemplate="%{text:.2s}", textposition="top center", textfont_size=10).update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
 
 with T["🛒 Channel"]:
     gc=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="gchan")
     trc={"Daily":"day","Weekly":"week","Monthly":"month"}[gc]
     df=Q(f"SELECT date_trunc('{trc}',date) period,marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1")
-    plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,title=f"{gc} {mlab} by Channel").update_layout(height=420),width='stretch')
+    plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,text="v",title=f"{gc} {mlab} by Channel").update_traces(texttemplate="%{text:.2s}", textposition="top center", textfont_size=9).update_layout(height=420),width='stretch')
     sh=Q(f"SELECT marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 2 DESC")
     a,b=st.columns(2)
     with a: plot(px.pie(sh,names="marketplaces",values="v",hole=0.45,title="Channel Share"),width='stretch')
@@ -664,24 +667,31 @@ if CAT:
         df=Q(f'SELECT "{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1 ORDER BY 2 DESC')
         plot(px.bar(df,x="v",y="k",orientation="h",text_auto=".2s",title=f"{mlab} by {dim}").update_layout(height=max(400,len(df)*26),yaxis=dict(categoryorder="total ascending"),yaxis_title=None,xaxis_title=mlab),width='stretch')
         trd=Q(f'SELECT date_trunc(\'month\',date) period,"{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1,2 ORDER BY 1')
-        plot(px.line(trd,x="period",y="v",color="k",markers=True,title=f"Monthly {mlab} by {dim}").update_layout(height=420),width='stretch')
+        plot(px.line(trd,x="period",y="v",color="k",markers=True,text="v",title=f"Monthly {mlab} by {dim}").update_traces(texttemplate="%{text:.2s}", textposition="top center", textfont_size=9).update_layout(height=420),width='stretch')
 
 with T["🔀 Compare"]:
     mode=st.selectbox("Comparison",["Year over Year","Month over Month"])
     if mode=="Year over Year":
         df=Q(f'SELECT mon "month",yr "year",{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1,2'); df["year"]=df["year"].astype(str)
-        plot(px.line(df,x="month",y="v",color="year",markers=True,title=f"YoY {mlab}").update_layout(height=440),width='stretch')
+        plot(px.line(df,x="month",y="v",color="year",markers=True,text="v",title=f"YoY {mlab}").update_traces(texttemplate="%{text:.2s}", textposition="top center", textfont_size=9).update_layout(height=440),width='stretch')
     else:
         df=Q(f"SELECT date_trunc('month',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1"); df["MoM %"]=(df["v"].pct_change()*100).round(1)
-        fig=go.Figure(); fig.add_bar(x=df["period"],y=df["v"],name=mlab)
-        fig.add_trace(go.Scatter(x=df["period"],y=df["MoM %"],name="MoM %",yaxis="y2",mode="lines+markers"))
+        fig=go.Figure(); fig.add_bar(x=df["period"],y=df["v"],name=mlab,text=df["v"],texttemplate="%{text:.2s}",textposition="outside")
+        fig.add_trace(go.Scatter(x=df["period"],y=df["MoM %"],name="MoM %",yaxis="y2",mode="lines+markers+text",text=df["MoM %"],texttemplate="%{text:.1f}%",textposition="top center"))
         fig.update_layout(height=440,yaxis=dict(title=mlab),yaxis2=dict(title="MoM %",overlaying="y",side="right"))
         plot(fig,width='stretch')
 
 with T["📦 SKUs"]:
     n=st.slider("Top N SKUs",5,50,15)
-    namecol=next((c for c in LABEL if "name" in c.lower()),None)
-    sel=f'sku, "{namecol}"' if namecol else "sku"
+    _attr=CAT+LABEL                                          # describe each SKU with product name + colour + size
+    def _pickcol(*subs):
+        for c in _attr:                                      # exact match first...
+            if c.lower().strip() in subs: return c
+        for c in _attr:                                      # ...then contains
+            if any(s in c.lower() for s in subs): return c
+        return None
+    desc=[c for c in [_pickcol("product_name","product name","name"),_pickcol("color","colour"),_pickcol("size")] if c]
+    sel=", ".join(["sku"]+[f'"{c}"' for c in desc])
     ord_expr=("COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)")
     _orderby={"subtotal":"rev","qty":"units","orders":"orders"}[metric]
     df=Q(f'SELECT {sel}, SUM(subtotal) rev, SUM(qty) units, {ord_expr} orders FROM joined WHERE {WHERE} GROUP BY {sel} ORDER BY {_orderby} DESC LIMIT {n}')
@@ -696,12 +706,16 @@ with T["🧮 Pivot"]:
         except Exception: return 9999
     dim_opts=(CAT if CAT else [])+["marketplaces"]
     low_card_dims=[c for c in dim_opts if _card(c)<=30]
-    col_opts=["Month (YYYY-MM)","Year","Quarter"]+low_card_dims
+    col_opts=["Month (YYYY-MM)","Week (start)","Day (YYYY-MM-DD)","Quarter","Year"]+low_card_dims
     cpa,cpb=st.columns(2)
     rd=cpa.selectbox("Rows",dim_opts,key="piv_rows")
     cd=cpb.selectbox("Columns",col_opts,key="piv_cols")
     if cd=="Month (YYYY-MM)":
         col_sql="yr||'-'||lpad(mon::VARCHAR,2,'0')"; order_sql="2"
+    elif cd=="Week (start)":
+        col_sql="strftime(date_trunc('week',date),'%Y-%m-%d')"; order_sql="2"
+    elif cd=="Day (YYYY-MM-DD)":
+        col_sql="strftime(date,'%Y-%m-%d')"; order_sql="2"
     elif cd=="Year":
         col_sql="CAST(yr AS VARCHAR)"; order_sql="2"
     elif cd=="Quarter":
