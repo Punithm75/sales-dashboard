@@ -35,91 +35,85 @@ st.set_page_config(page_title="D2C Sales Dashboard", layout="wide",
 # ---------- Theme / styling ----------
 st.markdown('''
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Outfit:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root{
-  --bg:#0e0e10; --panel:#16161a; --panel2:#1d1d22; --line:#2a2a30;
-  --ink:#f4f4f5; --muted:#9b9ba6;
-  --lilac:#9b87f5; --sand:#e8c468; --rose:#e87a90; --teal:#5bbfb0;
+  --bg:#f6f7fb; --panel:#ffffff; --line:#e8eaf0;
+  --ink:#1f2430; --muted:#6b7280;
+  --indigo:#6366f1; --indigo2:#8b5cf6; --ink900:#13141b;
 }
-html, body, [class*="css"], .stApp{ font-family:'Outfit',sans-serif; }
+html, body, [class*="css"], .stApp{ font-family:'Inter',sans-serif; }
+.stApp{ background:var(--bg); color:var(--ink); }
 
-/* Refined single-accent atmosphere */
-.stApp{
-  background:
-    radial-gradient(1000px 600px at 15% -10%, rgba(155,135,245,.12) 0%, transparent 55%),
-    radial-gradient(700px 500px at 100% 0%, rgba(155,135,245,.05) 0%, transparent 50%),
-    #0e0e10;
-  color:var(--ink);
-}
+/* Title + headings — clean sans, near-black */
+h1{ font-family:'Inter',sans-serif !important; font-weight:800 !important;
+    letter-spacing:-.6px; font-size:2.05rem !important; color:var(--ink) !important; margin-top:.1rem !important; }
+h2,h3{ font-family:'Inter',sans-serif !important; font-weight:700 !important; color:var(--ink) !important; letter-spacing:-.2px; }
 
-/* Title — gradient wordmark */
-h1{ font-family:'Fraunces',serif !important; font-weight:700 !important;
-    letter-spacing:-1px; font-size:2.7rem !important; margin-top:.1rem !important;
-    background:linear-gradient(100deg,#fff 0%,#c9bdff 100%);
-    -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
-h2,h3{ font-family:'Outfit',sans-serif !important; font-weight:600 !important; color:var(--ink); }
+/* Sidebar — white panel */
+section[data-testid="stSidebar"]{ background:#ffffff; border-right:1px solid var(--line); }
+section[data-testid="stSidebar"] h1{ font-size:1.05rem !important; color:var(--ink) !important; font-weight:700 !important; }
+section[data-testid="stSidebar"] .stMarkdown strong{ color:var(--indigo); }
 
-/* Sidebar */
-section[data-testid="stSidebar"]{
-  background:linear-gradient(180deg,#11141f 0%,#0d1019 100%);
-  border-right:1px solid var(--line); }
-section[data-testid="stSidebar"] h1{ font-size:1.25rem !important;
-  background:linear-gradient(90deg,#fff,#c9bdff); -webkit-background-clip:text;
-  -webkit-text-fill-color:transparent; }
-section[data-testid="stSidebar"] .stMarkdown strong{ color:var(--lilac); }
-
-/* KPI cards — glass panels with a colored top accent; each of the 4 gets its own hue */
+/* KPI cards — white, soft shadow, indigo top accent */
 div[data-testid="stMetric"]{
-  position:relative; overflow:hidden;
-  background:linear-gradient(160deg,rgba(40,46,72,.6) 0%,rgba(22,26,40,.9) 100%);
-  border:1px solid var(--line); border-radius:18px; padding:20px 22px 18px;
-  box-shadow:0 8px 28px rgba(0,0,0,.35); backdrop-filter:blur(6px);
+  position:relative; overflow:hidden; background:#ffffff;
+  border:1px solid var(--line); border-radius:16px; padding:20px 22px 18px;
+  box-shadow:0 1px 2px rgba(17,20,27,.04), 0 10px 24px rgba(17,20,27,.05);
   transition:transform .18s ease, box-shadow .18s ease, border-color .18s; }
-div[data-testid="stMetric"]:hover{ transform:translateY(-4px);
-  box-shadow:0 14px 40px rgba(0,0,0,.5); }
-div[data-testid="stMetric"]::before{ content:""; position:absolute; top:0; left:0; right:0; height:3px; background:linear-gradient(90deg,#9b87f5,#5bbfb0); }
+div[data-testid="stMetric"]:hover{ transform:translateY(-3px);
+  box-shadow:0 10px 30px rgba(99,102,241,.16); border-color:#dadbf7; }
+div[data-testid="stMetric"]::before{ content:""; position:absolute; top:0; left:0; right:0; height:3px;
+  background:linear-gradient(90deg,var(--indigo),var(--indigo2)); }
 
-div[data-testid="stMetricLabel"]{ color:var(--muted) !important; font-size:.78rem !important;
-  text-transform:uppercase; letter-spacing:1.4px; font-weight:600; }
-div[data-testid="stMetricValue"]{ font-family:'Fraunces',serif !important;
-  font-weight:600 !important; font-size:2rem !important; color:#f4f4f5 !important; }
+div[data-testid="stMetricLabel"]{ color:var(--muted) !important; font-size:.72rem !important;
+  text-transform:uppercase; letter-spacing:1.2px; font-weight:600; }
+div[data-testid="stMetricValue"]{ font-family:'Inter',sans-serif !important;
+  font-weight:800 !important; font-size:1.9rem !important; color:var(--ink) !important; letter-spacing:-.5px; }
 
 /* Tabs */
 button[data-baseweb="tab"]{ font-weight:600; color:var(--muted); font-size:.95rem; }
-button[data-baseweb="tab"][aria-selected="true"]{ color:var(--lilac) !important; }
-div[data-baseweb="tab-highlight"]{ background:linear-gradient(90deg,#9b87f5,#5bbfb0) !important; height:3px; }
+button[data-baseweb="tab"][aria-selected="true"]{ color:var(--indigo) !important; }
+div[data-baseweb="tab-highlight"]{ background:var(--indigo) !important; height:3px; border-radius:3px; }
 
 /* Inputs / tags */
-.stMultiSelect div[data-baseweb="select"]>div, .stDateInput input{
-  background:var(--panel2); border-color:var(--line); border-radius:11px; }
-div[data-baseweb="tag"]{ background:#9b87f5 !important; border-radius:8px; border:none; }
-.stRadio [aria-checked="true"]{ }
+.stMultiSelect div[data-baseweb="select"]>div, .stDateInput input, .stTextInput input{
+  background:#ffffff; border-color:var(--line); border-radius:10px; }
+div[data-baseweb="tag"]{ background:var(--indigo) !important; border-radius:7px; border:none; color:#fff; }
 
-/* Caption + divider */
+/* Buttons — light default, near-black for download/submit */
+.stButton>button{ border-radius:10px; border:1px solid var(--line); font-weight:600; color:var(--ink); background:#fff; }
+.stButton>button:hover{ border-color:var(--indigo); color:var(--indigo); }
+.stDownloadButton>button, .stFormSubmitButton>button{
+  background:var(--ink900); color:#fff !important; border:none; border-radius:10px; font-weight:600; }
+.stDownloadButton>button:hover, .stFormSubmitButton>button:hover{ background:#000; }
+
+/* Chat bubbles (AI tab) */
+div[data-testid="stChatMessage"]{ background:#ffffff; border:1px solid var(--line); border-radius:14px; }
+
+/* Caption + divider + dataframe */
 .stCaption, div[data-testid="stCaptionContainer"]{ color:var(--muted) !important; }
 hr{ border-color:var(--line); }
-
-/* Dataframe subtle polish */
 div[data-testid="stDataFrame"]{ border-radius:12px; overflow:hidden; border:1px solid var(--line); }
 </style>
 ''', unsafe_allow_html=True)
 
 # Plotly theme applied per-chart via a helper
 PLOT_BG="rgba(0,0,0,0)"
-PALETTE=["#9b87f5","#e8c468","#e87a90","#5bbfb0"]
+# Indigo-led, restrained palette for the light theme (single-series charts render indigo)
+PALETTE=["#6366f1","#8b5cf6","#10b981","#f59e0b","#ef4444","#06b6d4"]
 def style_fig(fig):
     fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
-                      font=dict(color="#c9c9d2", family="Outfit", size=13),
+                      font=dict(color="#5b6170", family="Inter", size=13),
                       colorway=PALETTE, margin=dict(t=54,l=10,r=10,b=10),
                       legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=12)),
-                      title=dict(font=dict(family="Fraunces", size=18, color="#eef0f7")),
-                      hoverlabel=dict(bgcolor="#1d1d22", bordercolor="#2a2a30",
-                                      font=dict(family="Outfit", color="#eef0f7")))
-    fig.update_xaxes(gridcolor="rgba(255,255,255,.05)", zerolinecolor="rgba(255,255,255,.08)",
-                     linecolor="rgba(255,255,255,.12)")
-    fig.update_yaxes(gridcolor="rgba(255,255,255,.05)", zerolinecolor="rgba(255,255,255,.08)",
-                     linecolor="rgba(255,255,255,.12)")
+                      title=dict(font=dict(family="Inter", size=17, color="#1f2430")),
+                      hoverlabel=dict(bgcolor="#ffffff", bordercolor="#e8eaf0",
+                                      font=dict(family="Inter", color="#1f2430")))
+    fig.update_xaxes(gridcolor="rgba(17,20,27,.06)", zerolinecolor="rgba(17,20,27,.10)",
+                     linecolor="rgba(17,20,27,.12)")
+    fig.update_yaxes(gridcolor="rgba(17,20,27,.06)", zerolinecolor="rgba(17,20,27,.10)",
+                     linecolor="rgba(17,20,27,.12)")
     # make area/line fills richer
     fig.update_traces(selector=dict(type="scatter"), line=dict(width=2.5))
     return fig
@@ -510,7 +504,7 @@ try:
     txn_expr="COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)"
     k=Q(f"SELECT SUM(subtotal) rev, SUM(qty) units, {txn_expr} txns, COUNT(DISTINCT sku) skus FROM joined WHERE {WHERE}").iloc[0]
     c1,c2,c3,c4=st.columns(4)
-    c1.metric("Subtotal",f"{(k.rev or 0):,.0f}"); c2.metric("Units",f"{(k.units or 0):,.0f}")
+    c1.metric("Subtotal",f"₹{(k.rev or 0):,.0f}"); c2.metric("Units",f"{(k.units or 0):,.0f}")
     c3.metric("Orders",f"{(k.txns or 0):,.0f}"); c4.metric("Active SKUs",f"{(k.skus or 0):,.0f}")
 except Exception:
     st.error("Could not compute KPIs."); st.code(traceback.format_exc())
@@ -523,7 +517,7 @@ with T["📈 Trend"]:
     g=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="g")
     tr={"Daily":"day","Weekly":"week","Monthly":"month"}[g]
     df=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
-    plot(px.area(df,x="period",y="v",title=f"{g} {mlab}").update_traces(line_color="#9b87f5", fillcolor="rgba(155,135,245,0.22)").update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
+    plot(px.area(df,x="period",y="v",title=f"{g} {mlab}").update_traces(line_color="#6366f1", fillcolor="rgba(99,102,241,0.12)").update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
 
 with T["🛒 Channel"]:
     gc=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="gchan")
@@ -532,8 +526,8 @@ with T["🛒 Channel"]:
     plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,title=f"{gc} {mlab} by Channel").update_layout(height=420),width='stretch')
     sh=Q(f"SELECT marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 2 DESC")
     a,b=st.columns(2)
-    a.plotly_chart(px.pie(sh,names="marketplaces",values="v",hole=0.45,title="Channel Share"),width='stretch')
-    b.plotly_chart(px.bar(sh,x="marketplaces",y="v",text_auto=".2s",title="Channel Totals"),width='stretch')
+    with a: plot(px.pie(sh,names="marketplaces",values="v",hole=0.45,title="Channel Share"),width='stretch')
+    with b: plot(px.bar(sh,x="marketplaces",y="v",text_auto=".2s",title="Channel Totals"),width='stretch')
 
 if CAT:
     with T["🧩 By Attribute"]:
