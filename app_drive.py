@@ -625,20 +625,21 @@ if not CAT:
 elif MATCH<99:
     st.warning(f"SKU match rate: {MATCH:.1f}%. Unmatched rows count in totals but carry no attributes.")
 
-try:
-    txn_expr="COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)"
-    k=Q(f"SELECT SUM(subtotal) rev, SUM(qty) units, {txn_expr} txns, COUNT(DISTINCT sku) skus FROM joined WHERE {WHERE}").iloc[0]
-    c1,c2,c3,c4=st.columns(4)
-    c1.metric("Subtotal",f"₹{(k.rev or 0):,.0f}"); c2.metric("Units",f"{(k.units or 0):,.0f}")
-    c3.metric("Orders",f"{(k.txns or 0):,.0f}"); c4.metric("Active SKUs",f"{(k.skus or 0):,.0f}")
-except Exception:
-    st.error("Could not compute KPIs."); st.code(traceback.format_exc())
 st.divider()
 
 tabs=["📈 Trend","🛒 Channel"]+(["🧩 By Attribute"] if CAT else [])+["🔀 Compare","📦 SKUs","🧮 Pivot","🤖 Ask AI"]
 T=dict(zip(tabs, st.tabs(tabs)))
 
 with T["📈 Trend"]:
+    try:                                                     # KPI summary lives only on the Trend tab now
+        txn_expr="COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)"
+        k=Q(f"SELECT SUM(subtotal) rev, SUM(qty) units, {txn_expr} txns, COUNT(DISTINCT sku) skus FROM joined WHERE {WHERE}").iloc[0]
+        c1,c2,c3,c4=st.columns(4)
+        c1.metric("Subtotal",f"₹{(k.rev or 0):,.0f}"); c2.metric("Units",f"{(k.units or 0):,.0f}")
+        c3.metric("Orders",f"{(k.txns or 0):,.0f}"); c4.metric("Active SKUs",f"{(k.skus or 0):,.0f}")
+    except Exception:
+        st.error("Could not compute KPIs."); st.code(traceback.format_exc())
+    st.divider()
     g=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="g")
     tr={"Daily":"day","Weekly":"week","Monthly":"month"}[g]
     df=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
