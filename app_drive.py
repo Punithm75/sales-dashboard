@@ -122,6 +122,28 @@ def plot(fig, **kw):
     import streamlit as _st
     return _st.plotly_chart(style_fig(fig), **kw)
 
+# ---------- Indian number formatting ----------
+def ind_group(v):
+    """Indian comma grouping for full numbers: 64698803 -> '6,46,98,803'."""
+    try: n=int(round(float(v)))
+    except Exception: return v
+    sign="-" if n<0 else ""; d=str(abs(n))
+    if len(d)<=3: return sign+d
+    head,tail=d[:-3],d[-3:]; parts=[]
+    while len(head)>2: parts.insert(0,head[-2:]); head=head[:-2]
+    if head: parts.insert(0,head)
+    return sign+",".join(parts)+","+tail
+
+def inr_abbr(v):
+    """Compact Indian magnitude for chart labels: Cr / L / K (not Millions)."""
+    try: v=float(v)
+    except Exception: return ""
+    a=abs(v); s="-" if v<0 else ""
+    if a>=1e7: return f"{s}{a/1e7:.2f} Cr"
+    if a>=1e5: return f"{s}{a/1e5:.2f} L"
+    if a>=1e3: return f"{s}{a/1e3:.1f} K"
+    return f"{s}{a:.0f}"
+
 # ---------- password ----------
 def check_password():
     def entered():
@@ -566,8 +588,10 @@ if metric=="orders":
     agg=("COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)")
 else:
     agg=f"SUM({metric})"
-dr=st.sidebar.date_input("Date range", value=(DMIN,DMAX), min_value=DMIN, max_value=DMAX, key="f_dates")
-start,end=(dr if isinstance(dr,tuple) and len(dr)==2 else (DMIN,DMAX))
+_dc1,_dc2=st.sidebar.columns(2)
+start=_dc1.date_input("Start date", value=DMIN, min_value=DMIN, max_value=DMAX, key="f_start")
+end  =_dc2.date_input("End date",   value=DMAX, min_value=DMIN, max_value=DMAX, key="f_end")
+if start>end: start,end=end,start   # guard against reversed selection
 
 def distinct(col):
     try:
@@ -641,42 +665,60 @@ with T["📈 Trend"]:
         txn_expr="COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)"
         k=Q(f"SELECT SUM(subtotal) rev, SUM(qty) units, {txn_expr} txns, COUNT(DISTINCT sku) skus FROM joined WHERE {WHERE}").iloc[0]
         c1,c2,c3,c4=st.columns(4)
-        c1.metric("Subtotal",f"₹{(k.rev or 0):,.0f}"); c2.metric("Units",f"{(k.units or 0):,.0f}")
-        c3.metric("Orders",f"{(k.txns or 0):,.0f}"); c4.metric("Active SKUs",f"{(k.skus or 0):,.0f}")
+        c1.metric("Subtotal",f"₹{ind_group(k.rev or 0)}"); c2.metric("Units",ind_group(k.units or 0))
+        c3.metric("Orders",ind_group(k.txns or 0)); c4.metric("Active SKUs",ind_group(k.skus or 0))
     except Exception:
         st.error("Could not compute KPIs."); st.code(traceback.format_exc())
     st.divider()
     g=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="g")
     tr={"Daily":"day","Weekly":"week","Monthly":"month"}[g]
     df=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
-    plot(px.area(df,x="period",y="v",text="v",title=f"{g} {mlab}").update_traces(line_color="#6366f1", fillcolor="rgba(99,102,241,0.12)", texttemplate="%{text:.2s}", textposition="top center", textfont_size=10).update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
+    df["lbl"]=df["v"].map(inr_abbr)
+    plot(px.area(df,x="period",y="v",text="lbl",title=f"{g} {mlab}").update_traces(line_color="#6366f1", fillcolor="rgba(99,102,241,0.12)", texttemplate="%{text}", textposition="top center", textfont_size=10).update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
+    # Price vs volume: Units (bars) + Subtotal/unit i.e. realised ASP (line, right axis)
+    pv=Q(f"SELECT date_trunc('{tr}',date) period, SUM(qty) units, SUM(subtotal) rev FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
+    pv["asp"]=(pv["rev"]/pv["units"].replace(0,pd.NA)).fillna(0)
+    pf=go.Figure()
+    pf.add_bar(x=pv["period"],y=pv["units"],name="Units",marker_color="#c7c4f5",
+               text=pv["units"].map(inr_abbr),texttemplate="%{text}",textposition="outside")
+    pf.add_trace(go.Scatter(x=pv["period"],y=pv["asp"],name="Subtotal / unit (₹)",yaxis="y2",
+               mode="lines+markers+text",line=dict(color="#6366f1"),
+               text=pv["asp"].map(inr_abbr),texttemplate="%{text}",textposition="top center"))
+    pf.update_layout(height=380,title="Units vs Subtotal / unit  (price- or volume-led?)",
+               yaxis=dict(title="Units"),yaxis2=dict(title="₹ / unit",overlaying="y",side="right"),
+               legend=dict(orientation="h",yanchor="bottom",y=1.02))
+    plot(pf,width='stretch')
 
 with T["🛒 Channel"]:
     gc=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="gchan")
     trc={"Daily":"day","Weekly":"week","Monthly":"month"}[gc]
     df=Q(f"SELECT date_trunc('{trc}',date) period,marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1")
-    plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,text="v",title=f"{gc} {mlab} by Channel").update_traces(texttemplate="%{text:.2s}", textposition="top center", textfont_size=9).update_layout(height=420),width='stretch')
+    df["lbl"]=df["v"].map(inr_abbr)
+    plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,text="lbl",title=f"{gc} {mlab} by Channel").update_traces(texttemplate="%{text}", textposition="top center", textfont_size=9).update_layout(height=420),width='stretch')
     sh=Q(f"SELECT marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 2 DESC")
+    sh["lbl"]=sh["v"].map(inr_abbr)
     a,b=st.columns(2)
     with a: plot(px.pie(sh,names="marketplaces",values="v",hole=0.45,title="Channel Share"),width='stretch')
-    with b: plot(px.bar(sh,x="marketplaces",y="v",text_auto=".2s",title="Channel Totals"),width='stretch')
+    with b: plot(px.bar(sh,x="marketplaces",y="v",text="lbl",title="Channel Totals").update_traces(texttemplate="%{text}",textposition="outside"),width='stretch')
 
 if CAT:
     with T["🧩 By Attribute"]:
         dim=st.selectbox("Break down by",CAT)
         df=Q(f'SELECT "{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1 ORDER BY 2 DESC')
-        plot(px.bar(df,x="v",y="k",orientation="h",text_auto=".2s",title=f"{mlab} by {dim}").update_layout(height=max(400,len(df)*26),yaxis=dict(categoryorder="total ascending"),yaxis_title=None,xaxis_title=mlab),width='stretch')
+        df["lbl"]=df["v"].map(inr_abbr)
+        plot(px.bar(df,x="v",y="k",orientation="h",text="lbl",title=f"{mlab} by {dim}").update_traces(texttemplate="%{text}").update_layout(height=max(400,len(df)*26),yaxis=dict(categoryorder="total ascending"),yaxis_title=None,xaxis_title=mlab),width='stretch')
         trd=Q(f'SELECT date_trunc(\'month\',date) period,"{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1,2 ORDER BY 1')
-        plot(px.line(trd,x="period",y="v",color="k",markers=True,text="v",title=f"Monthly {mlab} by {dim}").update_traces(texttemplate="%{text:.2s}", textposition="top center", textfont_size=9).update_layout(height=420),width='stretch')
+        trd["lbl"]=trd["v"].map(inr_abbr)
+        plot(px.line(trd,x="period",y="v",color="k",markers=True,text="lbl",title=f"Monthly {mlab} by {dim}").update_traces(texttemplate="%{text}", textposition="top center", textfont_size=9).update_layout(height=420),width='stretch')
 
 with T["🔀 Compare"]:
     mode=st.selectbox("Comparison",["Year over Year","Month over Month"])
     if mode=="Year over Year":
-        df=Q(f'SELECT mon "month",yr "year",{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1,2'); df["year"]=df["year"].astype(str)
-        plot(px.line(df,x="month",y="v",color="year",markers=True,text="v",title=f"YoY {mlab}").update_traces(texttemplate="%{text:.2s}", textposition="top center", textfont_size=9).update_layout(height=440),width='stretch')
+        df=Q(f'SELECT mon "month",yr "year",{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1,2'); df["year"]=df["year"].astype(str); df["lbl"]=df["v"].map(inr_abbr)
+        plot(px.line(df,x="month",y="v",color="year",markers=True,text="lbl",title=f"YoY {mlab}").update_traces(texttemplate="%{text}", textposition="top center", textfont_size=9).update_layout(height=440),width='stretch')
     else:
         df=Q(f"SELECT date_trunc('month',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1"); df["MoM %"]=(df["v"].pct_change()*100).round(1)
-        fig=go.Figure(); fig.add_bar(x=df["period"],y=df["v"],name=mlab,text=df["v"],texttemplate="%{text:.2s}",textposition="outside")
+        fig=go.Figure(); fig.add_bar(x=df["period"],y=df["v"],name=mlab,text=df["v"].map(inr_abbr),texttemplate="%{text}",textposition="outside")
         fig.add_trace(go.Scatter(x=df["period"],y=df["MoM %"],name="MoM %",yaxis="y2",mode="lines+markers+text",text=df["MoM %"],texttemplate="%{text:.1f}%",textposition="top center"))
         fig.update_layout(height=440,yaxis=dict(title=mlab),yaxis2=dict(title="MoM %",overlaying="y",side="right"))
         plot(fig,width='stretch')
@@ -695,7 +737,7 @@ with T["📦 SKUs"]:
     ord_expr=("COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)")
     _orderby={"subtotal":"rev","qty":"units","orders":"orders"}[metric]
     df=Q(f'SELECT {sel}, SUM(subtotal) rev, SUM(qty) units, {ord_expr} orders FROM joined WHERE {WHERE} GROUP BY {sel} ORDER BY {_orderby} DESC LIMIT {n}')
-    st.dataframe(df,width='stretch')
+    st.dataframe(df.style.format({c:ind_group for c in ("rev","units","orders") if c in df.columns}),width='stretch')
 
 with T["🧮 Pivot"]:
     # Columns dropdown: time options + only LOW-cardinality dims (so we never try to
@@ -732,7 +774,7 @@ with T["🧮 Pivot"]:
         piv["Total"]=piv.sum(axis=1)
         piv=piv.sort_values("Total",ascending=False)
         st.caption(f"{len(piv):,} rows · {len(piv.columns)-1} columns")
-        st.dataframe(piv.style.format("{:,.0f}"),width='stretch',height=480)
+        st.dataframe(piv.style.format(ind_group),width='stretch',height=480)
         st.download_button("Download CSV",piv.to_csv().encode(),"pivot.csv","text/csv")
 
 with T["🤖 Ask AI"]:
