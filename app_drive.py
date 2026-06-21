@@ -673,17 +673,18 @@ with T["📈 Trend"]:
     g=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="g")
     tr={"Daily":"day","Weekly":"week","Monthly":"month"}[g]
     df=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
-    df["lbl"]=df["v"].map(inr_abbr)
+    df["lbl"]=df["v"].map(inr_abbr) if len(df)<=40 else ""    # data labels only when sparse -> keeps daily/weekly light
     plot(px.area(df,x="period",y="v",text="lbl",title=f"{g} {mlab}").update_traces(line_color="#6366f1", fillcolor="rgba(99,102,241,0.12)", texttemplate="%{text}", textposition="top center", textfont_size=10).update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
     # Price vs volume: Units (bars) + Subtotal/unit i.e. realised ASP (line, right axis)
     pv=Q(f"SELECT date_trunc('{tr}',date) period, SUM(qty) units, SUM(subtotal) rev FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
     pv["asp"]=(pv["rev"]/pv["units"].replace(0,pd.NA)).fillna(0)
+    _few=len(pv)<=40                                          # only label / draw text when not crowded
     pf=go.Figure()
     pf.add_bar(x=pv["period"],y=pv["units"],name="Units",marker_color="#c7c4f5",
-               text=pv["units"].map(inr_abbr),texttemplate="%{text}",textposition="outside")
+               text=(pv["units"].map(inr_abbr) if _few else None),texttemplate="%{text}",textposition="outside")
     pf.add_trace(go.Scatter(x=pv["period"],y=pv["asp"],name="Subtotal / unit (₹)",yaxis="y2",
-               mode="lines+markers+text",line=dict(color="#6366f1"),
-               text=pv["asp"].map(inr_abbr),texttemplate="%{text}",textposition="top center"))
+               mode=("lines+markers+text" if _few else "lines+markers"),line=dict(color="#6366f1"),
+               text=(pv["asp"].map(inr_abbr) if _few else None),texttemplate="%{text}",textposition="top center"))
     pf.update_layout(height=380,title="Units vs Subtotal / unit  (price- or volume-led?)",
                yaxis=dict(title="Units"),yaxis2=dict(title="₹ / unit",overlaying="y",side="right"),
                legend=dict(orientation="h",yanchor="bottom",y=1.02))
@@ -693,7 +694,7 @@ with T["🛒 Channel"]:
     gc=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="gchan")
     trc={"Daily":"day","Weekly":"week","Monthly":"month"}[gc]
     df=Q(f"SELECT date_trunc('{trc}',date) period,marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1")
-    df["lbl"]=df["v"].map(inr_abbr)
+    df["lbl"]=df["v"].map(inr_abbr) if df["period"].nunique()<=40 else ""
     plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,text="lbl",title=f"{gc} {mlab} by Channel").update_traces(texttemplate="%{text}", textposition="top center", textfont_size=9).update_layout(height=420),width='stretch')
     sh=Q(f"SELECT marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 2 DESC")
     sh["lbl"]=sh["v"].map(inr_abbr)
@@ -708,7 +709,7 @@ if CAT:
         df["lbl"]=df["v"].map(inr_abbr)
         plot(px.bar(df,x="v",y="k",orientation="h",text="lbl",title=f"{mlab} by {dim}").update_traces(texttemplate="%{text}").update_layout(height=max(400,len(df)*26),yaxis=dict(categoryorder="total ascending"),yaxis_title=None,xaxis_title=mlab),width='stretch')
         trd=Q(f'SELECT date_trunc(\'month\',date) period,"{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1,2 ORDER BY 1')
-        trd["lbl"]=trd["v"].map(inr_abbr)
+        trd["lbl"]=trd["v"].map(inr_abbr) if trd["period"].nunique()<=40 else ""
         plot(px.line(trd,x="period",y="v",color="k",markers=True,text="lbl",title=f"Monthly {mlab} by {dim}").update_traces(texttemplate="%{text}", textposition="top center", textfont_size=9).update_layout(height=420),width='stretch')
 
 with T["🔀 Compare"]:
@@ -768,6 +769,10 @@ with T["🧮 Pivot"]:
     df=Q(f'SELECT "{rd}" r, {col_sql} c, {agg} v FROM joined WHERE {WHERE} AND "{rd}" IS NOT NULL{extra_where} GROUP BY 1,2 ORDER BY {order_sql}')
     if df.empty:
         st.info("No data for this selection.")
+    elif df["c"].nunique()>80:
+        # guard: Day/Week over a long range would build a huge table (and OOM the host) -> ask for a coarser column
+        st.warning(f"'{cd}' would make {df['c'].nunique():,} columns over this date range — too wide to render. "
+                   "Pick a coarser column (Month / Quarter / Year) or narrow the date range.")
     else:
         piv=df.pivot(index="r",columns="c",values="v").fillna(0)
         # add a row total and sort rows by it (most relevant rows first)
