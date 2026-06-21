@@ -299,25 +299,28 @@ def _canon_retail(con, raw, tag):
     sto=pick("Invoice Associate Short Name","Franchisee Name","Store Bucket","store","location")
     if not (sku and ref and dat and qty and val):
         raise RuntimeError("retail file missing required columns (Product Code / Invoice No / Invoice Date / Total Sales Qty / Nett Invoice Value)")
+    # everything CAST to VARCHAR first, so this works whether the file is a CSV (all-text) or a typed Parquet
     def numexpr(col):                                        # " 1,599 "->1599 ; " - "->0 ; keep real negatives
-        c='TRIM("'+col+'")'
+        c="TRIM(CAST(\""+col+"\" AS VARCHAR))"
         return ("TRY_CAST(CASE WHEN regexp_full_match("+c+",'[-–— ]*') THEN '0' "
                 "ELSE NULLIF(regexp_replace("+c+",'[, ]','','g'),'') END AS DOUBLE)")
-    dexpr="TRY_CAST(strptime(NULLIF(TRIM(\""+dat+"\"),''),'%d-%b-%y') AS DATE)"
-    tsign=("CASE upper(trim(\""+typ+"\")) WHEN 'SR' THEN -1.0 WHEN 'IR' THEN -1.0 ELSE 1.0 END") if typ else "1.0"
-    store_e=("NULLIF(TRIM(\""+sto+"\"),'')") if sto else "CAST(NULL AS VARCHAR)"
+    dv="NULLIF(TRIM(CAST(\""+dat+"\" AS VARCHAR)),'')"
+    dexpr=("COALESCE(TRY_CAST(try_strptime("+dv+",'%d-%b-%y') AS DATE), TRY_CAST("+dv+" AS DATE), "
+           "TRY_CAST(TRY_CAST("+dv+" AS TIMESTAMP) AS DATE))")   # try_strptime: NULL (not error) on mismatch; covers DD-Mon-YY, ISO, parquet datetime
+    tsign=("CASE upper(trim(CAST(\""+typ+"\" AS VARCHAR))) WHEN 'SR' THEN -1.0 WHEN 'IR' THEN -1.0 ELSE 1.0 END") if typ else "1.0"
+    store_e=("NULLIF(TRIM(CAST(\""+sto+"\" AS VARCHAR)),'')") if sto else "CAST(NULL AS VARCHAR)"
+    skue="NULLIF(TRIM(CAST(\""+sku+"\" AS VARCHAR)),'')"
+    refe="NULLIF(TRIM(CAST(\""+ref+"\" AS VARCHAR)),'')"
     # ABS(value) * type-sign: IV adds, SR/IR subtract -- correct whether the source stores returns as +ve or -ve
-    sql=("SELECT NULLIF(TRIM(\""+sku+"\"),'') AS sku, "
+    sql=("SELECT "+skue+" AS sku, "
          "ABS(COALESCE("+numexpr(val)+",0))*("+tsign+") AS subtotal, "
          "ABS(COALESCE("+numexpr(qty)+",0))*("+tsign+") AS qty, "
          "'Retail' AS marketplaces, "
          +dexpr+" AS date, "
-         "NULLIF(TRIM(\""+ref+"\"),'') AS reference_code, "
+         +refe+" AS reference_code, "
          +store_e+" AS store "
          "FROM "+raw+" "
-         "WHERE NULLIF(TRIM(\""+sku+"\"),'') IS NOT NULL "
-         "AND NULLIF(TRIM(\""+ref+"\"),'') IS NOT NULL "
-         "AND "+dexpr+" IS NOT NULL")
+         "WHERE "+skue+" IS NOT NULL AND "+refe+" IS NOT NULL AND "+dexpr+" IS NOT NULL")
     return sql, True
 
 # ---------- build a DuckDB connection that reads sales from disk + registers small master ----------
@@ -332,22 +335,24 @@ def build_everything():
     for i,(path,kind) in enumerate(files):
         raw=f"src_raw_{i}"
         try:
-            if kind=="retail":
+            if path.lower().endswith(".csv"):
                 con.execute(f"CREATE VIEW {raw} AS SELECT * FROM read_csv_auto('{path}', header=true, all_varchar=true, ignore_errors=true)")
-                retail.append(_canon_retail(con, raw, i)[0])
-            elif path.lower().endswith(".csv"):
-                con.execute(f"CREATE VIEW {raw} AS SELECT * FROM read_csv_auto('{path}')")
-                online.append(_canon_online(con, raw, i)[0])
             else:
                 con.execute(f"CREATE VIEW {raw} AS SELECT * FROM read_parquet('{path}')")
-                online.append(_canon_online(con, raw, i)[0])
+            # classify by COLUMNS (works for csv or parquet) -> retail if it carries the POS-export signature
+            cols={str(r[0]).lower().strip() for r in con.execute("DESCRIBE "+raw).fetchall()}
+            is_retail=bool({"invoice no","sales transaction type (iv/sr/ir)","nett invoice value"} & cols)
+            (retail if is_retail else online).append(
+                (_canon_retail if is_retail else _canon_online)(con, raw, i)[0])
         except Exception as e:
             skipped.append((path, str(e)[:200]))
     if skipped: st.session_state["_skipped_files"]=skipped
 
-    # canonical online rows + retail rows (retail de-duped by invoice+sku so re-uploaded periods don't double-count)
+    # canonical online rows + retail rows
     parts=[f"SELECT * FROM ({s})" for s in online]
-    if retail:
+    if len(retail)==1:
+        parts.append(f"SELECT * FROM ({retail[0]})")         # single file: no overlap possible -> skip the heavy de-dup window
+    elif retail:                                             # multiple retail files: de-dup by invoice+sku so re-uploaded periods don't double-count
         runion=" UNION ALL ".join(f"SELECT * FROM ({s})" for s in retail)
         parts.append("SELECT sku,subtotal,qty,marketplaces,date,reference_code,store FROM ("
                      "SELECT *, ROW_NUMBER() OVER (PARTITION BY reference_code, sku ORDER BY date DESC) AS _rn "
