@@ -1,0 +1,14 @@
+# Keep the image lean + never bake in secrets or data.
+.git
+.gitignore
+.streamlit/secrets.toml
+secrets.toml
+*.parquet
+*.csv
+__pycache__/
+*.pyc
+.DS_Store
+*.webp
+BlissClub-logo.jpg
+DEPLOY_CLOUDRUN.md
+README.md
