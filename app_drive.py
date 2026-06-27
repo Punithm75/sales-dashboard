@@ -36,90 +36,92 @@ st.set_page_config(page_title="D2C Sales Dashboard", layout="wide",
 st.markdown('''
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-
 :root{
-  --bg:#f6f7fb; --panel:#ffffff; --line:#e8eaf0;
-  --ink:#1f2430; --muted:#6b7280;
-  --indigo:#6366f1; --indigo2:#8b5cf6; --ink900:#13141b;
+  --bg:#f7f8fa; --panel:#ffffff; --line:#ebedf2;
+  --ink:#0f1115; --ink2:#5a6070; --muted:#9aa0ad;
+  --indigo:#6366f1; --indigo2:#8b5cf6; --ink900:#0f1115; --up:#0f9d6b; --down:#c2453b;
 }
-html, body, [class*="css"], .stApp{ font-family:'Inter',sans-serif; }
+html, body, [class*="css"], .stApp{ font-family:'Inter',sans-serif; font-variant-numeric:tabular-nums; }
 .stApp{ background:var(--bg); color:var(--ink); }
-
-/* Title + headings — clean sans, near-black */
-h1{ font-family:'Inter',sans-serif !important; font-weight:800 !important;
-    letter-spacing:-.6px; font-size:2.05rem !important; color:var(--ink) !important; margin-top:.1rem !important; }
+.block-container{ padding-top:2.2rem; }
+h1{ font-family:'Inter',sans-serif !important; font-weight:800 !important; letter-spacing:-.8px;
+    font-size:2.0rem !important; color:var(--ink) !important; }
 h2,h3{ font-family:'Inter',sans-serif !important; font-weight:700 !important; color:var(--ink) !important; letter-spacing:-.2px; }
 
-/* Sidebar — white panel */
-section[data-testid="stSidebar"]{ background:#ffffff; border-right:1px solid var(--line); }
+section[data-testid="stSidebar"]{ background:#fff; border-right:1px solid var(--line); }
 section[data-testid="stSidebar"] h1{ font-size:1.05rem !important; color:var(--ink) !important; font-weight:700 !important; }
 section[data-testid="stSidebar"] .stMarkdown strong{ color:var(--indigo); }
 
-/* KPI cards — white, soft shadow, indigo top accent */
-div[data-testid="stMetric"]{
-  position:relative; overflow:hidden; background:#ffffff;
-  border:1px solid var(--line); border-radius:16px; padding:20px 22px 18px;
-  box-shadow:0 1px 2px rgba(17,20,27,.04), 0 10px 24px rgba(17,20,27,.05);
-  transition:transform .18s ease, box-shadow .18s ease, border-color .18s; }
-div[data-testid="stMetric"]:hover{ transform:translateY(-3px);
-  box-shadow:0 10px 30px rgba(99,102,241,.16); border-color:#dadbf7; }
-div[data-testid="stMetric"]::before{ content:""; position:absolute; top:0; left:0; right:0; height:3px;
-  background:linear-gradient(90deg,var(--indigo),var(--indigo2)); }
+/* Tabs -> pill nav */
+div[data-baseweb="tab-list"]{ gap:4px; background:#fff; border:1px solid var(--line);
+  border-radius:13px; padding:5px; box-shadow:0 1px 2px rgba(16,17,21,.04); }
+button[data-baseweb="tab"]{ font-weight:600; color:var(--ink2); font-size:.92rem; border-radius:9px; padding:8px 14px; }
+button[data-baseweb="tab"][aria-selected="true"]{ color:#fff !important; background:var(--indigo); box-shadow:0 5px 14px rgba(99,102,241,.34); }
+div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"]{ display:none !important; }
 
-div[data-testid="stMetricLabel"]{ color:var(--muted) !important; font-size:.72rem !important;
-  text-transform:uppercase; letter-spacing:1.2px; font-weight:600; }
-div[data-testid="stMetricValue"]{ font-family:'Inter',sans-serif !important;
-  font-weight:800 !important; font-size:1.9rem !important; color:var(--ink) !important; letter-spacing:-.5px; }
+/* Hero / KPI cards */
+.bc-hero{ background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:20px 24px;
+  box-shadow:0 1px 2px rgba(16,17,21,.04),0 12px 28px rgba(16,17,21,.05); display:flex; align-items:stretch; }
+.bc-hero .lead{ flex:1.1; display:flex; flex-direction:column; justify-content:center; gap:8px; padding-right:24px; }
+.bc-hero .rule{ width:1px; background:#eef0f4; }
+.bc-hero .trio{ flex:1.45; display:flex; }
+.bc-hero .stat{ flex:1; padding:0 22px; display:flex; flex-direction:column; gap:6px; justify-content:center; }
+.bc-hero .stat + .stat{ border-left:1px solid #eef0f4; }
+.bc-lab{ font:600 11px Inter; letter-spacing:1.1px; text-transform:uppercase; color:var(--muted); }
+.bc-big{ font:800 40px/1 Inter; letter-spacing:-1.4px; color:var(--ink); }
+.bc-mid{ font:800 24px/1 Inter; letter-spacing:-.5px; color:var(--ink); }
+.bc-sub{ font:500 12.5px Inter; color:var(--muted); }
+.bc-up{ display:inline-flex; align-items:center; gap:4px; font:700 12px Inter; color:var(--up); background:rgba(16,185,129,.10); padding:4px 9px; border-radius:20px; }
+.bc-down{ display:inline-flex; align-items:center; gap:4px; font:700 12px Inter; color:var(--down); background:rgba(239,68,68,.10); padding:4px 9px; border-radius:20px; }
 
-/* Tabs */
-button[data-baseweb="tab"]{ font-weight:600; color:var(--muted); font-size:.95rem; }
-button[data-baseweb="tab"][aria-selected="true"]{ color:var(--indigo) !important; }
-div[data-baseweb="tab-highlight"]{ background:var(--indigo) !important; height:3px; border-radius:3px; }
+/* Insight strip */
+.bc-insight{ display:flex; gap:14px; align-items:center; background:linear-gradient(90deg,#eef0fe,#f5f3fe);
+  border:1px solid #e3e3fb; border-radius:14px; padding:14px 18px; font:500 14px/1.55 Inter; color:#2b2f3a; margin-bottom:14px; animation:bcFade .5s ease both; }
+.bc-insight b{ color:#0f1115; }
+.bc-insight .ic{ flex:none; display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:11px; background:#6366f1; color:#fff; font-size:18px; box-shadow:0 6px 16px rgba(99,102,241,.34); }
 
-/* Inputs / tags */
-.stMultiSelect div[data-baseweb="select"]>div, .stDateInput input, .stTextInput input{
-  background:#ffffff; border-color:var(--line); border-radius:10px; }
+/* Pacing-to-target ring */
+.bc-ring{ flex:none; width:182px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:0 8px; border-left:1px solid #eef0f4; }
+.bc-ring .wrap{ position:relative; width:118px; height:118px; }
+.bc-ring .wrap .ctr{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.bc-ring circle.fg{ animation:bcRing 1.3s cubic-bezier(.22,.61,.36,1) both; }
+@keyframes bcFade{ from{ opacity:0; transform:translateY(10px);} to{ opacity:1; transform:none; } }
+@keyframes bcRing{ from{ stroke-dashoffset:327; } }
+div[data-testid="stPlotlyChart"]{ transition:box-shadow .18s ease; border-radius:14px; }
+div[data-testid="stPlotlyChart"]:hover{ box-shadow:0 6px 20px rgba(16,17,21,.08); }
+
+/* Inputs / tags / buttons / chat / dataframe */
+.stMultiSelect div[data-baseweb="select"]>div, .stDateInput input, .stTextInput input{ background:#fff; border-color:var(--line); border-radius:10px; }
 div[data-baseweb="tag"]{ background:var(--indigo) !important; border-radius:7px; border:none; color:#fff; }
-
-/* Buttons — light default, near-black for download/submit */
 .stButton>button{ border-radius:10px; border:1px solid var(--line); font-weight:600; color:var(--ink); background:#fff; }
 .stButton>button:hover{ border-color:var(--indigo); color:var(--indigo); }
-.stDownloadButton>button, .stFormSubmitButton>button{
-  background:var(--ink900); color:#fff !important; border:none; border-radius:10px; font-weight:600; }
-.stDownloadButton>button:hover, .stFormSubmitButton>button:hover{ background:#000; }
-
-/* Chat bubbles (AI tab) */
-div[data-testid="stChatMessage"]{ background:#ffffff; border:1px solid var(--line); border-radius:14px; }
-
-/* Caption + divider + dataframe */
+.stDownloadButton>button, .stFormSubmitButton>button{ background:var(--ink900); color:#fff !important; border:none; border-radius:10px; font-weight:600; }
+div[data-testid="stChatMessage"]{ background:#fff; border:1px solid var(--line); border-radius:14px; }
 .stCaption, div[data-testid="stCaptionContainer"]{ color:var(--muted) !important; }
 hr{ border-color:var(--line); }
 div[data-testid="stDataFrame"]{ border-radius:12px; overflow:hidden; border:1px solid var(--line); }
 </style>
 ''', unsafe_allow_html=True)
 
-# Plotly theme applied per-chart via a helper
+# ---------- Plotly theme + chart helpers ----------
 PLOT_BG="rgba(0,0,0,0)"
-# Indigo-led, restrained palette for the light theme (single-series charts render indigo)
-PALETTE=["#6366f1","#8b5cf6","#10b981","#f59e0b","#ef4444","#06b6d4"]
+PALETTE=["#6366f1","#8b5cf6","#f43f5e","#0ea5e9","#14b8a6"]
+CHANNEL_COLORS={"Shopify":"#6366f1","MP":"#8b5cf6","Retail":"#f43f5e","Cocoblue":"#0ea5e9","Myntra B2B":"#14b8a6"}
 def style_fig(fig):
     fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
-                      font=dict(color="#5b6170", family="Inter", size=13),
-                      colorway=PALETTE, margin=dict(t=54,l=10,r=10,b=10),
-                      legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=12)),
-                      title=dict(font=dict(family="Inter", size=17, color="#1f2430")),
-                      hoverlabel=dict(bgcolor="#ffffff", bordercolor="#e8eaf0",
-                                      font=dict(family="Inter", color="#1f2430")))
-    fig.update_xaxes(gridcolor="rgba(17,20,27,.06)", zerolinecolor="rgba(17,20,27,.10)",
-                     linecolor="rgba(17,20,27,.12)")
-    fig.update_yaxes(gridcolor="rgba(17,20,27,.06)", zerolinecolor="rgba(17,20,27,.10)",
-                     linecolor="rgba(17,20,27,.12)")
-    # make area/line fills richer
-    fig.update_traces(selector=dict(type="scatter"), line=dict(width=2.5))
+                      font=dict(color="#5a6070", family="Inter", size=12), colorway=PALETTE,
+                      margin=dict(t=16,l=10,r=14,b=28),
+                      legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=12), orientation="h", yanchor="bottom", y=1.02, x=0),
+                      title=dict(font=dict(family="Inter", size=15, color="#0f1115")),
+                      hoverlabel=dict(bgcolor="#ffffff", bordercolor="#ebedf2", font=dict(family="Inter", color="#1f2430")))
+    fig.update_xaxes(showgrid=False, zeroline=False, linecolor="rgba(16,17,21,.13)")
+    fig.update_yaxes(gridcolor="rgba(16,17,21,.06)", zeroline=False, linecolor="rgba(0,0,0,0)")
+    fig.update_traces(selector=dict(type="scatter"), line=dict(width=2.6))
     return fig
 
 def plot(fig, **kw):
     import streamlit as _st
+    kw.setdefault("config", {"displayModeBar": False})
     return _st.plotly_chart(style_fig(fig), **kw)
 
 # ---------- Indian number formatting ----------
@@ -143,6 +145,36 @@ def inr_abbr(v):
     if a>=1e5: return f"{s}{a/1e5:.2f} L"
     if a>=1e3: return f"{s}{a/1e3:.1f} K"
     return f"{s}{a:.0f}"
+
+def inr_cr(v):
+    """Compact rupee for the hero KPI: 5931802140 -> '₹593.2 Cr' (no truncation)."""
+    try: v=float(v)
+    except Exception: return "—"
+    a=abs(v); s="-" if v<0 else ""
+    if a>=1e7: return f"₹{s}{a/1e7:.1f} Cr"
+    if a>=1e5: return f"₹{s}{a/1e5:.1f} L"
+    return f"₹{s}{a:,.0f}"
+
+# colour-name -> hex, keyword fallback so it works for ANY brand colour ("Bliss Black"->black, etc.)
+_COLOR_KEYWORDS={"black":"#1c1c1f","navy":"#2c3c6b","blue":"#2f6fd0","brown":"#7c5430","taupe":"#b9a48c",
+  "white":"#c3c8d2","cloud":"#c3c8d2","burgundy":"#7d2436","red":"#d6453b","mauve":"#b488c6","purple":"#6d4bd6",
+  "pink":"#d98aa0","rouge":"#c45a72","grey":"#5b6470","gray":"#5b6470","green":"#3f6b5a","seaweed":"#3f6b5a",
+  "olive":"#6b6b3f","beige":"#cbb89a","ash":"#8a7a6f","oyster":"#2b2b2e","herringbone":"#9aa0ad",
+  "yellow":"#e0a83a","orange":"#d97a3a","lilac":"#b488c6","sand":"#cbb89a","teal":"#14b8a6"}
+def colour_to_hex(name):
+    low=str(name).lower()
+    for kw,hexv in _COLOR_KEYWORDS.items():
+        if kw in low: return hexv
+    return "#6366f1"   # safe brand fallback for unknown names
+
+def _pick_colour_col():
+    """The colour attribute name from the master (or None) — mirrors the SKUs tab pattern."""
+    cols=(CAT or [])+(LABEL or [])
+    for c in cols:
+        if c.lower().strip() in ("color","colour"): return c
+    for c in cols:
+        if "colour" in c.lower() or "color" in c.lower(): return c
+    return None
 
 # ---------- password ----------
 def check_password():
@@ -588,6 +620,7 @@ if metric=="orders":
     agg=("COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)")
 else:
     agg=f"SUM({metric})"
+FY_TARGET=st.sidebar.number_input("FY revenue target (₹ Cr)", value=760.0, step=10.0, key="fy_target")*1e7  # for the pacing ring; set your real number
 _dc1,_dc2=st.sidebar.columns(2)
 start=_dc1.date_input("Start date", value=DMIN, min_value=DMIN, max_value=DMAX, key="f_start")
 end  =_dc2.date_input("End date",   value=DMAX, min_value=DMIN, max_value=DMAX, key="f_end")
@@ -630,13 +663,109 @@ if CAT:
                 except Exception: pass
 
 def sin(col,vals): return "\""+col+"\" IN ("+",".join("'"+v.replace("'","''")+"'" for v in vals)+")"
-wheres=[f"date BETWEEN '{start}' AND '{end}'"]
-for col,vals in selected.items():
-    if col.startswith("__num__"):
-        c=col[7:]; wheres.append(f'"{c}" BETWEEN {vals[0]} AND {vals[1]}')
-    else:
-        wheres.append(sin(col,vals))
-WHERE=" AND ".join(wheres)
+def build_where(d0,d1):                              # same filters, any date range (needed for deltas)
+    parts=[f"date BETWEEN '{d0}' AND '{d1}'"]
+    for col,vals in selected.items():
+        if col.startswith("__num__"):
+            c=col[7:]; parts.append(f'"{c}" BETWEEN {vals[0]} AND {vals[1]}')
+        else:
+            parts.append(sin(col,vals))
+    return " AND ".join(parts)
+WHERE=build_where(start,end)                         # selected window (unchanged behaviour)
+import datetime as _dt
+_span=(end-start); _prev_end=start-_dt.timedelta(days=1); _prev_start=_prev_end-_span
+PREV_WHERE=build_where(_prev_start,_prev_end)        # immediately-preceding equal window, for deltas
+
+# ---------- overview helpers (hero KPIs, live insight, growth drivers, ghosted trend) ----------
+def _delta_html(cur,prev):
+    try: cur=float(cur); prev=float(prev)
+    except Exception: return ""
+    if prev==0 or cur!=cur or prev!=prev: return ""      # guard None / NaN / zero (no prior window)
+    pct=(cur-prev)/prev*100.0
+    cls="bc-up" if pct>=0 else "bc-down"; arrow="▲" if pct>=0 else "▼"
+    return (f'<span class="{cls}"><span style="font-size:8px">{arrow}</span>{abs(pct):.1f}%'
+            f'<span style="font-weight:500;font-size:11px;color:#7c8aa0">vs prev</span></span>')
+
+def render_kpis():
+    txn="COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)"
+    q=f"SELECT SUM(subtotal) rev, SUM(qty) units, {txn} orders, COUNT(DISTINCT sku) skus FROM joined WHERE "
+    cur,prev=Q(q+WHERE).iloc[0], Q(q+PREV_WHERE).iloc[0]
+    rev,units,orders,skus=(cur.rev or 0),(cur.units or 0),(cur.orders or 0),(cur.skus or 0)
+    aov=(rev/orders) if orders else 0
+    paov=((prev.rev or 0)/prev.orders) if (prev.orders or 0) else 0
+    frac=min(max(rev/FY_TARGET,0),1) if FY_TARGET else 0; off=327*(1-frac)
+    ring=(f'<div class="bc-ring"><div class="wrap"><svg width="118" height="118" viewBox="0 0 118 118">'
+          f'<circle cx="59" cy="59" r="52" fill="none" stroke="#eef0f6" stroke-width="12"/>'
+          f'<circle class="fg" cx="59" cy="59" r="52" fill="none" stroke="#6366f1" stroke-width="12" stroke-linecap="round" '
+          f'stroke-dasharray="327" stroke-dashoffset="{off:.1f}" transform="rotate(-90 59 59)"/></svg>'
+          f'<div class="ctr"><span style="font:800 22px Inter;color:#0f1115;letter-spacing:-.5px">{frac*100:.0f}%</span>'
+          f'<span style="font:600 9px Inter;letter-spacing:.5px;text-transform:uppercase;color:#9aa0ad">to target</span></div></div>'
+          f'<span style="font:500 11px Inter;color:#9aa0ad">FY target <b style="color:#5a6070">{inr_cr(FY_TARGET)}</b></span></div>')
+    st.markdown(f'''<div class="bc-hero">
+      <div class="lead"><span class="bc-lab">Total Subtotal</span>
+        <div style="display:flex;align-items:flex-end;gap:13px"><span class="bc-big">{inr_cr(rev)}</span>{_delta_html(rev,prev.rev)}</div>
+        <span class="bc-sub">₹{ind_group(rev)} · {ind_group(skus)} active SKUs · {inr_abbr(orders)} orders</span></div>
+      <div class="rule"></div>{ring}
+      <div class="trio">
+        <div class="stat"><span class="bc-lab">Units</span><span class="bc-mid">{inr_abbr(units)}</span>{_delta_html(units,prev.units)}</div>
+        <div class="stat"><span class="bc-lab">Orders</span><span class="bc-mid">{inr_abbr(orders)}</span>{_delta_html(orders,prev.orders)}</div>
+        <div class="stat"><span class="bc-lab">Avg order value</span><span class="bc-mid">₹{ind_group(aov)}</span>{_delta_html(aov,paov)}</div>
+      </div></div>''', unsafe_allow_html=True)
+
+def build_insight():
+    txn="COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)"
+    cur=Q(f"SELECT SUM(subtotal) rev,{txn} orders FROM joined WHERE {WHERE}").iloc[0]
+    prv=Q(f"SELECT SUM(subtotal) rev FROM joined WHERE {PREV_WHERE}").iloc[0]
+    rev,prev_rev=float(cur.rev or 0),float(prv.rev or 0)
+    pct=(rev-prev_rev)/prev_rev*100 if prev_rev>0 else 0     # >0 also rejects NaN
+    qc="SELECT marketplaces ch, SUM(subtotal) v FROM joined WHERE {w} GROUP BY 1"
+    c1=Q(qc.format(w=WHERE)).set_index("ch")["v"].astype(float)
+    c0=Q(qc.format(w=PREV_WHERE)).set_index("ch")["v"].astype(float)
+    contrib={c: float(c1.get(c,0))-float(c0.get(c,0)) for c in set(c1.index)|set(c0.index)}
+    aov=rev/float(cur.orders) if cur.orders else 0
+    arrow,col=("▲","#0f9d6b") if pct>=0 else ("▼","#c2453b")
+    parts=[f'Revenue reached <b>{inr_cr(rev)}</b>, <b style="color:{col}">{arrow} {abs(pct):.1f}%</b> vs the prior period.']
+    if contrib:
+        top=max(contrib,key=contrib.get)
+        if contrib[top]>0: parts.append(f'<b>{top}</b> contributed the most (+{inr_abbr(abs(contrib[top]))}).')
+    parts.append(f'AOV is <b>₹{ind_group(aov)}</b>.')
+    st.markdown(f'<div class="bc-insight"><span class="ic">✦</span><div>{" ".join(parts)}</div></div>', unsafe_allow_html=True)
+
+def growth_waterfall():
+    qc="SELECT marketplaces ch, SUM(subtotal) v FROM joined WHERE {w} GROUP BY 1"
+    c1=Q(qc.format(w=WHERE)).set_index("ch")["v"].astype(float)
+    c0=Q(qc.format(w=PREV_WHERE)).set_index("ch")["v"].astype(float)
+    if c0.empty: st.info("Not enough history for a driver breakdown."); return
+    chans=sorted(set(c1.index)|set(c0.index))
+    deltas=sorted([(c, float(c1.get(c,0))-float(c0.get(c,0))) for c in chans], key=lambda t:t[1], reverse=True)
+    base,total=float(c0.sum()),float(c1.sum())
+    xs=["Prior"]+[c for c,_ in deltas]+["Now"]; ys=[base]+[d for _,d in deltas]+[0]
+    meas=["absolute"]+["relative"]*len(deltas)+["total"]
+    txt=[inr_abbr(base)]+[("+" if d>=0 else "−")+inr_abbr(abs(d)) for _,d in deltas]+[inr_abbr(total)]
+    fig=go.Figure(go.Waterfall(orientation="v", measure=meas, x=xs, y=ys, text=txt, textposition="outside",
+        connector={"line":{"color":"rgba(16,17,21,.16)","width":1}},
+        increasing={"marker":{"color":"#6366f1"}}, decreasing={"marker":{"color":"#f43f5e"}}, totals={"marker":{"color":"#0f1115"}},
+        hovertemplate="%{x}<br>%{y:+,.0f}<extra></extra>"))
+    fig.update_layout(height=320, title=f"What drove the change · {mlab}", showlegend=False)
+    fig.update_xaxes(showgrid=False); fig.update_yaxes(range=[min(base,total)*0.96, max(base,total)*1.05])
+    plot(fig, width="stretch")
+
+def trend_with_ghost():
+    g=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="g")
+    tr={"Daily":"day","Weekly":"week","Monthly":"month"}[g]
+    cur=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
+    prv=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {PREV_WHERE} GROUP BY 1 ORDER BY 1")
+    fig=go.Figure()
+    if not prv.empty:
+        fig.add_trace(go.Scatter(x=cur["period"], y=prv["v"].reindex(range(len(cur))).values, mode="lines",
+            name="Prior period", line=dict(color="rgba(90,96,112,.40)", width=1.6, dash="dot")))
+    fig.add_trace(go.Scatter(x=cur["period"], y=cur["v"], mode="lines", name=mlab,
+        line=dict(color="#6366f1", width=2.8, shape="spline"), fill="tozeroy", fillcolor="rgba(99,102,241,0.12)"))
+    if len(cur):
+        fig.add_annotation(x=cur["period"].iloc[-1], y=cur["v"].iloc[-1], text=inr_abbr(cur["v"].iloc[-1]),
+            showarrow=False, xanchor="left", xshift=8, font=dict(family="Inter", size=12, color="#6366f1"))
+    fig.update_layout(height=320, title=f"{g} {mlab}", showlegend=True, yaxis_title=None, xaxis_title=None)
+    plot(fig, width="stretch")
 
 # ---------- header (title left, logo right) ----------
 hL, hR = st.columns([2,1], vertical_alignment="center")
@@ -657,74 +786,105 @@ elif MATCH<99:
 
 st.divider()
 
-tabs=["📈 Trend","🛒 Channel"]+(["🧩 By Attribute"] if CAT else [])+["🔀 Compare","📦 SKUs","🧮 Pivot","🤖 Ask AI"]
+tabs=["Trend","Channel"]+(["By Attribute"] if CAT else [])+["Compare","SKUs","Pivot","Ask AI"]
 T=dict(zip(tabs, st.tabs(tabs)))
 
-with T["📈 Trend"]:
-    try:                                                     # KPI summary lives only on the Trend tab now
-        txn_expr="COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)"
-        k=Q(f"SELECT SUM(subtotal) rev, SUM(qty) units, {txn_expr} txns, COUNT(DISTINCT sku) skus FROM joined WHERE {WHERE}").iloc[0]
-        c1,c2,c3,c4=st.columns(4)
-        c1.metric("Subtotal",f"₹{ind_group(k.rev or 0)}"); c2.metric("Units",ind_group(k.units or 0))
-        c3.metric("Orders",ind_group(k.txns or 0)); c4.metric("Active SKUs",ind_group(k.skus or 0))
-    except Exception:
-        st.error("Could not compute KPIs."); st.code(traceback.format_exc())
-    st.divider()
-    g=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="g")
-    tr={"Daily":"day","Weekly":"week","Monthly":"month"}[g]
-    df=Q(f"SELECT date_trunc('{tr}',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
-    df["lbl"]=df["v"].map(inr_abbr) if len(df)<=40 else ""    # data labels only when sparse -> keeps daily/weekly light
-    plot(px.area(df,x="period",y="v",text="lbl",title=f"{g} {mlab}").update_traces(line_color="#6366f1", fillcolor="rgba(99,102,241,0.12)", texttemplate="%{text}", textposition="top center", textfont_size=10).update_layout(height=420,yaxis_title=mlab,xaxis_title=None),width='stretch')
-    # Price vs volume: Units (bars) + Subtotal/unit i.e. realised ASP (line, right axis)
-    pv=Q(f"SELECT date_trunc('{tr}',date) period, SUM(qty) units, SUM(subtotal) rev FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
-    pv["asp"]=(pv["rev"]/pv["units"].replace(0,pd.NA)).fillna(0)
-    _few=len(pv)<=40                                          # only label / draw text when not crowded
+with T["Trend"]:
+    build_insight()                                          # plain-English takeaway
+    render_kpis()                                            # hero number + target ring + trio (with deltas)
+    st.write("")
+    cw,ct=st.columns([1.25,1])
+    with cw: growth_waterfall()                              # the "why" (per-channel YoY contribution)
+    with ct: trend_with_ghost()                              # trend + prior-period ghost
+    cda,cdb=st.columns([1.05,1])
+    with cda:                                                # revenue by channel
+        sh=Q(f"SELECT marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 2 DESC")
+        d=px.pie(sh,names="marketplaces",values="v",hole=0.66,title="Revenue by Channel",color="marketplaces",color_discrete_map=CHANNEL_COLORS)
+        d.update_traces(textinfo="none", marker=dict(line=dict(color="#fff",width=2.5)))
+        d.add_annotation(text=inr_abbr(sh["v"].sum()), showarrow=False, font=dict(size=18,color="#0f1115"))
+        d.update_layout(height=300, showlegend=True); plot(d,width="stretch")
+    with cdb:                                                # top colours, each bar in its actual colour
+        ccol=_pick_colour_col()
+        if ccol:
+            cc=Q(f'SELECT "{ccol}" k,{agg} v FROM joined WHERE {WHERE} AND "{ccol}" IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 6')
+            bar=px.bar(cc,x="v",y="k",orientation="h",title="Top Colours",color="k",color_discrete_map={n:colour_to_hex(n) for n in cc["k"]})
+            bar.update_traces(text=[inr_abbr(v) for v in cc["v"]],textposition="outside",cliponaxis=False,showlegend=False)
+            bar.update_layout(height=300, yaxis=dict(categoryorder="total ascending",automargin=True,title=None), xaxis=dict(visible=False, range=[0,(cc["v"].max() or 1)*1.18]))
+            plot(bar,width="stretch")
+        else: st.caption("Connect the master sheet to see the colour breakdown.")
+    # Price vs volume (kept): Units (bars) + Subtotal/unit ASP (line, right axis)
+    _g=st.session_state.get("g","Monthly"); _tr={"Daily":"day","Weekly":"week","Monthly":"month"}[_g]
+    pv=Q(f"SELECT date_trunc('{_tr}',date) period, SUM(qty) units, SUM(subtotal) rev FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1")
+    pv["asp"]=(pv["rev"]/pv["units"].replace(0,pd.NA)).fillna(0); _few=len(pv)<=40
     pf=go.Figure()
     pf.add_bar(x=pv["period"],y=pv["units"],name="Units",marker_color="#c7c4f5",
                text=(pv["units"].map(inr_abbr) if _few else None),texttemplate="%{text}",textposition="outside")
     pf.add_trace(go.Scatter(x=pv["period"],y=pv["asp"],name="Subtotal / unit (₹)",yaxis="y2",
                mode=("lines+markers+text" if _few else "lines+markers"),line=dict(color="#6366f1"),
                text=(pv["asp"].map(inr_abbr) if _few else None),texttemplate="%{text}",textposition="top center"))
-    pf.update_layout(height=380,title="Units vs Subtotal / unit  (price- or volume-led?)",
-               yaxis=dict(title="Units"),yaxis2=dict(title="₹ / unit",overlaying="y",side="right"),
-               legend=dict(orientation="h",yanchor="bottom",y=1.02))
+    pf.update_layout(height=360,title="Units vs Subtotal / unit  (price- or volume-led?)",
+               yaxis=dict(title="Units"),yaxis2=dict(title="₹ / unit",overlaying="y",side="right"))
     plot(pf,width='stretch')
 
-with T["🛒 Channel"]:
+with T["Channel"]:
     gc=st.radio("Granularity",["Daily","Weekly","Monthly"],horizontal=True,index=2,key="gchan")
     trc={"Daily":"day","Weekly":"week","Monthly":"month"}[gc]
     df=Q(f"SELECT date_trunc('{trc}',date) period,marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1")
-    df["lbl"]=df["v"].map(inr_abbr) if df["period"].nunique()<=40 else ""
-    plot(px.line(df,x="period",y="v",color="marketplaces",markers=True,text="lbl",title=f"{gc} {mlab} by Channel").update_traces(texttemplate="%{text}", textposition="top center", textfont_size=9).update_layout(height=420),width='stretch')
+    line=px.line(df,x="period",y="v",color="marketplaces",title=f"{gc} {mlab} by Channel",color_discrete_map=CHANNEL_COLORS)
+    line.update_traces(mode="lines")                         # no markers/labels — direct end-labels instead
+    for _,r in df.sort_values("period").groupby("marketplaces").tail(1).iterrows():
+        line.add_annotation(x=r["period"],y=r["v"],text=r["marketplaces"],showarrow=False,xanchor="left",xshift=8,
+            font=dict(family="Inter",size=11,color=CHANNEL_COLORS.get(r["marketplaces"],"#5a6070")))
+    line.update_layout(height=380,showlegend=False,margin=dict(r=120))
+    plot(line,width="stretch")
     sh=Q(f"SELECT marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 2 DESC")
-    sh["lbl"]=sh["v"].map(inr_abbr)
     a,b=st.columns(2)
-    with a: plot(px.pie(sh,names="marketplaces",values="v",hole=0.45,title="Channel Share"),width='stretch')
-    with b: plot(px.bar(sh,x="marketplaces",y="v",text="lbl",title="Channel Totals").update_traces(texttemplate="%{text}",textposition="outside"),width='stretch')
+    with a:
+        d=px.pie(sh,names="marketplaces",values="v",hole=0.55,title="Channel Share",color="marketplaces",color_discrete_map=CHANNEL_COLORS)
+        d.update_traces(textinfo="percent",marker=dict(line=dict(color="#fff",width=2))); d.update_layout(height=320); plot(d,width="stretch")
+    with b:
+        bar=px.bar(sh,x="marketplaces",y="v",title="Channel Totals",color="marketplaces",color_discrete_map=CHANNEL_COLORS)
+        bar.update_traces(text=[inr_abbr(v) for v in sh["v"]],textposition="outside",showlegend=False)
+        bar.update_layout(height=320,yaxis=dict(visible=False),xaxis_title=None); plot(bar,width="stretch")
 
 if CAT:
-    with T["🧩 By Attribute"]:
+    with T["By Attribute"]:
         dim=st.selectbox("Break down by",CAT)
         df=Q(f'SELECT "{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1 ORDER BY 2 DESC')
-        df["lbl"]=df["v"].map(inr_abbr)
-        plot(px.bar(df,x="v",y="k",orientation="h",text="lbl",title=f"{mlab} by {dim}").update_traces(texttemplate="%{text}").update_layout(height=max(400,len(df)*26),yaxis=dict(categoryorder="total ascending"),yaxis_title=None,xaxis_title=mlab),width='stretch')
+        is_colour=dim.lower().strip() in ("color","colour")
+        cmap={n:colour_to_hex(n) for n in df["k"]} if is_colour else None
+        bar=px.bar(df,x="v",y="k",orientation="h",title=f"{mlab} by {dim}",color="k" if is_colour else None,color_discrete_map=cmap)
+        bar.update_traces(text=[inr_abbr(v) for v in df["v"]],textposition="outside",cliponaxis=False,showlegend=False)
+        bar.update_layout(height=max(400,len(df)*28),yaxis=dict(categoryorder="total ascending",automargin=True,title=None),
+                          xaxis=dict(visible=False,range=[0,(df["v"].max() or 1)*1.15]))   # automargin keeps long colour names visible
+        plot(bar,width="stretch")
         trd=Q(f'SELECT date_trunc(\'month\',date) period,"{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1,2 ORDER BY 1')
-        trd["lbl"]=trd["v"].map(inr_abbr) if trd["period"].nunique()<=40 else ""
-        plot(px.line(trd,x="period",y="v",color="k",markers=True,text="lbl",title=f"Monthly {mlab} by {dim}").update_traces(texttemplate="%{text}", textposition="top center", textfont_size=9).update_layout(height=420),width='stretch')
+        ln=px.line(trd,x="period",y="v",color="k",title=f"Monthly {mlab} by {dim}"); ln.update_traces(mode="lines"); ln.update_layout(height=420)
+        plot(ln,width="stretch")
 
-with T["🔀 Compare"]:
+with T["Compare"]:
     mode=st.selectbox("Comparison",["Year over Year","Month over Month"])
     if mode=="Year over Year":
-        df=Q(f'SELECT mon "month",yr "year",{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1,2'); df["year"]=df["year"].astype(str); df["lbl"]=df["v"].map(inr_abbr)
-        plot(px.line(df,x="month",y="v",color="year",markers=True,text="lbl",title=f"YoY {mlab}").update_traces(texttemplate="%{text}", textposition="top center", textfont_size=9).update_layout(height=440),width='stretch')
+        df=Q(f'SELECT mon "month",yr "year",{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1,2')
+        df["year"]=df["year"].astype(int); years=sorted(df["year"].unique())
+        greys=["#d4d7e0","#b3b8c6","#9aa1b0","#6b7280","#2c3142"]
+        cmap={str(y):greys[min(i,len(greys)-1)] for i,y in enumerate(years)}
+        if years: cmap[str(years[-1])]="#6366f1"            # latest year = accent, older greyscaled
+        df["year"]=df["year"].astype(str)
+        fig=px.line(df,x="month",y="v",color="year",title=f"YoY {mlab}",color_discrete_map=cmap); fig.update_traces(mode="lines")
+        for y in years:
+            sub=df[df["year"]==str(y)].sort_values("month")
+            if len(sub): fig.add_annotation(x=sub["month"].iloc[-1],y=sub["v"].iloc[-1],text=str(y),showarrow=False,xanchor="left",xshift=8,font=dict(family="Inter",size=11.5,color=cmap[str(y)]))
+        fig.update_layout(height=420,showlegend=False,margin=dict(r=54),xaxis_title="Month")
+        plot(fig,width="stretch")
     else:
         df=Q(f"SELECT date_trunc('month',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1"); df["MoM %"]=(df["v"].pct_change()*100).round(1)
-        fig=go.Figure(); fig.add_bar(x=df["period"],y=df["v"],name=mlab,text=df["v"].map(inr_abbr),texttemplate="%{text}",textposition="outside")
-        fig.add_trace(go.Scatter(x=df["period"],y=df["MoM %"],name="MoM %",yaxis="y2",mode="lines+markers+text",text=df["MoM %"],texttemplate="%{text:.1f}%",textposition="top center"))
+        fig=go.Figure(); fig.add_bar(x=df["period"],y=df["v"],name=mlab,marker_color="#6366f1")
+        fig.add_trace(go.Scatter(x=df["period"],y=df["MoM %"],name="MoM %",yaxis="y2",mode="lines+markers",line=dict(color="#f43f5e")))
         fig.update_layout(height=440,yaxis=dict(title=mlab),yaxis2=dict(title="MoM %",overlaying="y",side="right"))
         plot(fig,width='stretch')
 
-with T["📦 SKUs"]:
+with T["SKUs"]:
     n=st.slider("Top N SKUs",5,50,15)
     _attr=CAT+LABEL                                          # describe each SKU with product name + colour + size
     def _pickcol(*subs):
@@ -738,9 +898,12 @@ with T["📦 SKUs"]:
     ord_expr=("COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)")
     _orderby={"subtotal":"rev","qty":"units","orders":"orders"}[metric]
     df=Q(f'SELECT {sel}, SUM(subtotal) rev, SUM(qty) units, {ord_expr} orders FROM joined WHERE {WHERE} GROUP BY {sel} ORDER BY {_orderby} DESC LIMIT {n}')
-    st.dataframe(df.style.format({c:ind_group for c in ("rev","units","orders") if c in df.columns}),width='stretch')
+    cfg={"rev":st.column_config.ProgressColumn("Revenue (₹)",format="₹%d",min_value=0,max_value=float(df["rev"].max() or 1)),
+         "units":st.column_config.NumberColumn("Units",format="%d"),
+         "orders":st.column_config.NumberColumn("Orders",format="%d")}
+    st.dataframe(df,width="stretch",hide_index=True,column_config=cfg)
 
-with T["🧮 Pivot"]:
+with T["Pivot"]:
     # Columns dropdown: time options + only LOW-cardinality dims (so we never try to
     # render thousands of columns, which breaks the table). High-cardinality fields
     # like product_name / Color are fine for ROWS but not for COLUMNS.
@@ -775,15 +938,24 @@ with T["🧮 Pivot"]:
                    "Pick a coarser column (Month / Quarter / Year) or narrow the date range.")
     else:
         piv=df.pivot(index="r",columns="c",values="v").fillna(0)
-        # add a row total and sort rows by it (most relevant rows first)
         piv["Total"]=piv.sum(axis=1)
         piv=piv.sort_values("Total",ascending=False)
-        st.caption(f"{len(piv):,} rows · {len(piv.columns)-1} columns")
-        st.dataframe(piv.style.format(ind_group),width='stretch',height=480)
+        vmax=float(piv.drop(columns="Total").values.max() or 1)
+        def _heat(col):                                      # value-shaded cells (no matplotlib) — darker = higher
+            out=[]
+            for v in col:
+                if col.name=="Total":
+                    out.append("font-weight:700;color:#0f1115;background:#f3f4fb")
+                else:
+                    a=0 if vmax<=0 else max(0.0,min(0.55,float(v)/vmax))
+                    out.append(f"background-color:rgba(99,102,241,{a:.3f});color:{'#fff' if a>=0.42 else '#0f1115'}")
+            return out
+        st.caption(f"{len(piv):,} rows · {len(piv.columns)-1} columns · darker = higher")
+        st.dataframe(piv.style.format(ind_group).apply(_heat,axis=0),width='stretch',height=480)
         st.download_button("Download CSV",piv.to_csv().encode(),"pivot.csv","text/csv")
 
-with T["🤖 Ask AI"]:
-    st.subheader("🤖 Ask AI")
+with T["Ask AI"]:
+    st.subheader("Ask AI")
     if not GEMINI_API_KEY:
         st.info(
             "**Assistant is off.** Add a Gemini API key to switch it on. In `.streamlit/secrets.toml`:\n\n"
