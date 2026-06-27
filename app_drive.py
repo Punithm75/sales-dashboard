@@ -801,7 +801,7 @@ with T["Trend"]:
         sh=Q(f"SELECT marketplaces,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 2 DESC")
         d=px.pie(sh,names="marketplaces",values="v",hole=0.66,title="Revenue by Channel",color="marketplaces",color_discrete_map=CHANNEL_COLORS)
         d.update_traces(textinfo="none", marker=dict(line=dict(color="#fff",width=2.5)))
-        d.add_annotation(text=inr_abbr(sh["v"].sum()), showarrow=False, font=dict(size=18,color="#0f1115"))
+        d.add_annotation(text=inr_abbr(sh["v"].sum()), x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(size=18,color="#0f1115"))
         d.update_layout(height=300, showlegend=True); plot(d,width="stretch")
     with cdb:                                                # top colours, each bar in its actual colour
         ccol=_pick_colour_col()
@@ -898,7 +898,9 @@ with T["SKUs"]:
     ord_expr=("COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)")
     _orderby={"subtotal":"rev","qty":"units","orders":"orders"}[metric]
     df=Q(f'SELECT {sel}, SUM(subtotal) rev, SUM(qty) units, {ord_expr} orders FROM joined WHERE {WHERE} GROUP BY {sel} ORDER BY {_orderby} DESC LIMIT {n}')
-    cfg={"rev":st.column_config.ProgressColumn("Revenue (₹)",format="₹%d",min_value=0,max_value=float(df["rev"].max() or 1)),
+    _mv=float(df["rev"].max()) if len(df) else 1.0       # empty filter → NaN guard for the progress bar
+    if _mv!=_mv or _mv<=0: _mv=1.0
+    cfg={"rev":st.column_config.ProgressColumn("Revenue (₹)",format="₹%d",min_value=0,max_value=_mv),
          "units":st.column_config.NumberColumn("Units",format="%d"),
          "orders":st.column_config.NumberColumn("Orders",format="%d")}
     st.dataframe(df,width="stretch",hide_index=True,column_config=cfg)
