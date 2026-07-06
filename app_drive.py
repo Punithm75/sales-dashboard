@@ -56,7 +56,8 @@ section[data-testid="stSidebar"] .stMarkdown strong{ color:var(--indigo); }
 div[data-baseweb="tab-list"]{ gap:4px; background:#fff; border:1px solid var(--line);
   border-radius:13px; padding:5px; box-shadow:0 1px 2px rgba(16,17,21,.04); }
 button[data-baseweb="tab"]{ font-weight:600; color:var(--ink2); font-size:.92rem; border-radius:9px; padding:8px 14px; }
-button[data-baseweb="tab"][aria-selected="true"]{ color:#fff !important; background:var(--indigo); box-shadow:0 5px 14px rgba(99,102,241,.34); }
+button[data-baseweb="tab"][aria-selected="true"]{ color:#fff !important; background:var(--indigo) !important; box-shadow:0 5px 14px rgba(99,102,241,.34) !important; }
+button[data-baseweb="tab"][aria-selected="false"]{ color:var(--ink2) !important; background:transparent !important; box-shadow:none !important; }
 div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"]{ display:none !important; }
 
 /* Hero / KPI cards */
@@ -110,8 +111,8 @@ CHANNEL_COLORS={"Shopify":"#6366f1","MP":"#8b5cf6","Retail":"#f43f5e","Cocoblue"
 def style_fig(fig):
     fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
                       font=dict(color="#5a6070", family="Inter", size=12), colorway=PALETTE,
-                      margin=dict(t=16,l=10,r=14,b=28),
-                      legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=12), orientation="h", yanchor="bottom", y=1.02, x=0),
+                      margin=dict(t=38,l=10,r=14,b=48),
+                      legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=12), orientation="h", yanchor="top", y=-0.10, x=0),
                       title=dict(font=dict(family="Inter", size=15, color="#0f1115")),
                       hoverlabel=dict(bgcolor="#ffffff", bordercolor="#ebedf2", font=dict(family="Inter", color="#1f2430")))
     fig.update_xaxes(showgrid=False, zeroline=False, linecolor="rgba(16,17,21,.13)")
@@ -119,10 +120,12 @@ def style_fig(fig):
     fig.update_traces(selector=dict(type="scatter"), line=dict(width=2.6))
     return fig
 
-def plot(fig, **kw):
-    import streamlit as _st
+def plot(fig, layout=None, **kw):
+    """Render a Plotly chart. Pass layout={...} to override style_fig defaults per-chart."""
     kw.setdefault("config", {"displayModeBar": False})
-    return _st.plotly_chart(style_fig(fig), **kw)
+    sf = style_fig(fig)
+    if layout: sf.update_layout(**layout)
+    return st.plotly_chart(sf, **kw)
 
 # ---------- Indian number formatting ----------
 def ind_group(v):
@@ -644,15 +647,16 @@ _stores=distinct("store")
 if _stores:
     sv=st.sidebar.multiselect("Store (retail)", _stores, key="f_store")
     if sv: selected["store"]=sv
+def _humanize(col): return col.replace("_"," ").title()
 if CAT:
     st.sidebar.markdown("**Product filters**")
     for c in CAT[:6]:
-        v=st.sidebar.multiselect(c, distinct(c), key=f"f_cat_{c}")
+        v=st.sidebar.multiselect(_humanize(c), distinct(c), key=f"f_cat_{c}")
         if v: selected[c]=v
     if CAT[6:] or NUM:
         with st.sidebar.expander("More filters"):
             for c in CAT[6:]:
-                v=st.multiselect(c, distinct(c), key=f"f_cat_{c}")
+                v=st.multiselect(_humanize(c), distinct(c), key=f"f_cat_{c}")
                 if v: selected[c]=v
             for c in NUM:
                 try:
@@ -724,7 +728,10 @@ def build_insight():
     contrib={c: float(c1.get(c,0))-float(c0.get(c,0)) for c in set(c1.index)|set(c0.index)}
     aov=rev/float(cur.orders) if cur.orders else 0
     arrow,col=("▲","#0f9d6b") if pct>=0 else ("▼","#c2453b")
-    parts=[f'Revenue reached <b>{inr_cr(rev)}</b>, <b style="color:{col}">{arrow} {abs(pct):.1f}%</b> vs the prior period.']
+    if prev_rev>0:
+        parts=[f'Revenue reached <b>{inr_cr(rev)}</b>, <b style="color:{col}">{arrow} {abs(pct):.1f}%</b> vs the prior period.']
+    else:
+        parts=[f'Revenue reached <b>{inr_cr(rev)}</b> in the selected period.']
     if contrib:
         top=max(contrib,key=contrib.get)
         if contrib[top]>0: parts.append(f'<b>{top}</b> contributed the most (+{inr_abbr(abs(contrib[top]))}).')
@@ -735,7 +742,7 @@ def growth_waterfall():
     qc="SELECT marketplaces ch, SUM(subtotal) v FROM joined WHERE {w} GROUP BY 1"
     c1=Q(qc.format(w=WHERE)).set_index("ch")["v"].astype(float)
     c0=Q(qc.format(w=PREV_WHERE)).set_index("ch")["v"].astype(float)
-    if c0.empty: st.info("Not enough history for a driver breakdown."); return
+    if c0.empty: st.info("Waterfall needs a comparison window — narrow the date range to compare two equal-length periods."); return
     chans=sorted(set(c1.index)|set(c0.index))
     deltas=sorted([(c, float(c1.get(c,0))-float(c0.get(c,0))) for c in chans], key=lambda t:t[1], reverse=True)
     base,total=float(c0.sum()),float(c1.sum())
@@ -807,8 +814,9 @@ with T["Trend"]:
         ccol=_pick_colour_col()
         if ccol:
             cc=Q(f'SELECT "{ccol}" k,{agg} v FROM joined WHERE {WHERE} AND "{ccol}" IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 6')
-            bar=px.bar(cc,x="v",y="k",orientation="h",title="Top Colours",color="k",color_discrete_map={n:colour_to_hex(n) for n in cc["k"]})
-            bar.update_traces(text=[inr_abbr(v) for v in cc["v"]],textposition="outside",cliponaxis=False,showlegend=False)
+            cc["_lbl"]=cc["v"].map(inr_abbr)
+            bar=px.bar(cc,x="v",y="k",orientation="h",title="Top Colours",color="k",color_discrete_map={n:colour_to_hex(n) for n in cc["k"]},text="_lbl")
+            bar.update_traces(textposition="outside",cliponaxis=False,showlegend=False)
             bar.update_layout(height=300, yaxis=dict(categoryorder="total ascending",automargin=True,title=None), xaxis=dict(visible=False, range=[0,(cc["v"].max() or 1)*1.18]))
             plot(bar,width="stretch")
         else: st.caption("Connect the master sheet to see the colour breakdown.")
@@ -843,8 +851,9 @@ with T["Channel"]:
         d=px.pie(sh,names="marketplaces",values="v",hole=0.55,title="Channel Share",color="marketplaces",color_discrete_map=CHANNEL_COLORS)
         d.update_traces(textinfo="percent",marker=dict(line=dict(color="#fff",width=2))); d.update_layout(height=320); plot(d,width="stretch")
     with b:
-        bar=px.bar(sh,x="marketplaces",y="v",title="Channel Totals",color="marketplaces",color_discrete_map=CHANNEL_COLORS)
-        bar.update_traces(text=[inr_abbr(v) for v in sh["v"]],textposition="outside",showlegend=False)
+        sh["_lbl"]=sh["v"].map(inr_abbr)
+        bar=px.bar(sh,x="marketplaces",y="v",title="Channel Totals",color="marketplaces",color_discrete_map=CHANNEL_COLORS,text="_lbl")
+        bar.update_traces(textposition="outside",showlegend=False)
         bar.update_layout(height=320,yaxis=dict(visible=False),xaxis_title=None); plot(bar,width="stretch")
 
 if CAT:
@@ -853,8 +862,9 @@ if CAT:
         df=Q(f'SELECT "{dim}" k,{agg} v FROM joined WHERE {WHERE} AND "{dim}" IS NOT NULL GROUP BY 1 ORDER BY 2 DESC')
         is_colour=dim.lower().strip() in ("color","colour")
         cmap={n:colour_to_hex(n) for n in df["k"]} if is_colour else None
-        bar=px.bar(df,x="v",y="k",orientation="h",title=f"{mlab} by {dim}",color="k" if is_colour else None,color_discrete_map=cmap)
-        bar.update_traces(text=[inr_abbr(v) for v in df["v"]],textposition="outside",cliponaxis=False,showlegend=False)
+        df["_lbl"]=df["v"].map(inr_abbr)
+        bar=px.bar(df,x="v",y="k",orientation="h",title=f"{mlab} by {dim}",color="k" if is_colour else None,color_discrete_map=cmap,text="_lbl")
+        bar.update_traces(textposition="outside",cliponaxis=False,showlegend=False)
         bar.update_layout(height=max(400,len(df)*28),yaxis=dict(categoryorder="total ascending",automargin=True,title=None),
                           xaxis=dict(visible=False,range=[0,(df["v"].max() or 1)*1.15]))   # automargin keeps long colour names visible
         plot(bar,width="stretch")
@@ -866,17 +876,24 @@ with T["Compare"]:
     mode=st.selectbox("Comparison",["Year over Year","Month over Month"])
     if mode=="Year over Year":
         df=Q(f'SELECT mon "month",yr "year",{agg} v FROM joined WHERE {WHERE} GROUP BY 1,2 ORDER BY 1,2')
-        df["year"]=df["year"].astype(int); years=sorted(df["year"].unique())
-        greys=["#d4d7e0","#b3b8c6","#9aa1b0","#6b7280","#2c3142"]
-        cmap={str(y):greys[min(i,len(greys)-1)] for i,y in enumerate(years)}
-        if years: cmap[str(years[-1])]="#6366f1"            # latest year = accent, older greyscaled
+        df["year"]=df["year"].astype(int)
+        # drop the current partial month so the latest year doesn't appear to collapse to 0
+        import datetime as _dt
+        _cy,_cm=_dt.date.today().year,_dt.date.today().month
+        df=df[~((df["year"]==_cy)&(df["month"]==_cm))]
+        years=sorted(df["year"].unique())
+        # distinct colors so years are visually separable (amber / teal / sky / purple / grey for older)
+        _YOY_PAL=["#f59e0b","#14b8a6","#0ea5e9","#a78bfa","#6b7280"]
+        cmap={str(y):_YOY_PAL[min(i,len(_YOY_PAL)-1)] for i,y in enumerate(years)}
+        if years: cmap[str(years[-1])]="#6366f1"            # latest year = accent indigo
         df["year"]=df["year"].astype(str)
         fig=px.line(df,x="month",y="v",color="year",title=f"YoY {mlab}",color_discrete_map=cmap); fig.update_traces(mode="lines")
         for y in years:
             sub=df[df["year"]==str(y)].sort_values("month")
             if len(sub): fig.add_annotation(x=sub["month"].iloc[-1],y=sub["v"].iloc[-1],text=str(y),showarrow=False,xanchor="left",xshift=8,font=dict(family="Inter",size=11.5,color=cmap[str(y)]))
-        fig.update_layout(height=420,showlegend=False,margin=dict(r=54),xaxis_title="Month")
-        plot(fig,width="stretch")
+        fig.update_layout(height=420,margin=dict(r=54),xaxis_title="Month",
+                          xaxis=dict(tickmode="linear",dtick=1,range=[0.5,12.5]))
+        plot(fig,layout=dict(showlegend=True,legend=dict(orientation="v",yanchor="top",y=1,x=1.02,xanchor="left",title=dict(text="Year"))),width="stretch")
     else:
         df=Q(f"SELECT date_trunc('month',date) period,{agg} v FROM joined WHERE {WHERE} GROUP BY 1 ORDER BY 1"); df["MoM %"]=(df["v"].pct_change()*100).round(1)
         fig=go.Figure(); fig.add_bar(x=df["period"],y=df["v"],name=mlab,marker_color="#6366f1")
@@ -898,11 +915,16 @@ with T["SKUs"]:
     ord_expr=("COUNT(DISTINCT reference_code)" if _HAS_REF else "COUNT(*)")
     _orderby={"subtotal":"rev","qty":"units","orders":"orders"}[metric]
     df=Q(f'SELECT {sel}, SUM(subtotal) rev, SUM(qty) units, {ord_expr} orders FROM joined WHERE {WHERE} GROUP BY {sel} ORDER BY {_orderby} DESC LIMIT {n}')
-    _mv=float(df["rev"].max()) if len(df) else 1.0       # empty filter → NaN guard for the progress bar
-    if _mv!=_mv or _mv<=0: _mv=1.0
-    cfg={"rev":st.column_config.ProgressColumn("Revenue (₹)",format="₹%d",min_value=0,max_value=_mv),
-         "units":st.column_config.NumberColumn("Units",format="%d"),
-         "orders":st.column_config.NumberColumn("Orders",format="%d")}
+    # humanize column names before display (sku, product_name, Color → SKU, Product Name, Color)
+    _rn={"sku":"SKU","rev":"Revenue","units":"Units","orders":"Orders"}
+    for c in desc: _rn.setdefault(c, c.replace("_"," ").title())
+    df=df.rename(columns=_rn)
+    # format Revenue as Cr/L/K (consistent with the rest of the dashboard)
+    if "Revenue" in df.columns:
+        df["Revenue"]=df["Revenue"].map(inr_cr)
+    cfg={"Revenue":st.column_config.TextColumn("Revenue"),
+         "Units":st.column_config.NumberColumn("Units",format="%d"),
+         "Orders":st.column_config.NumberColumn("Orders",format="%d")}
     st.dataframe(df,width="stretch",hide_index=True,column_config=cfg)
 
 with T["Pivot"]:
@@ -940,6 +962,7 @@ with T["Pivot"]:
                    "Pick a coarser column (Month / Quarter / Year) or narrow the date range.")
     else:
         piv=df.pivot(index="r",columns="c",values="v").fillna(0)
+        piv.index.name=rd; piv.columns.name=None   # show actual dim name, not SQL alias "r"
         piv["Total"]=piv.sum(axis=1)
         piv=piv.sort_values("Total",ascending=False)
         vmax=float(piv.drop(columns="Total").values.max() or 1)
@@ -983,9 +1006,9 @@ with T["Ask AI"]:
         pending=None
         examples=["Top 10 SKUs by revenue","Monthly revenue trend in 2025",
                   "Revenue share by channel","Total units sold"]
-        ecols=st.columns(len(examples))
+        ecols=st.columns(len(examples),gap="small")
         for i,e in enumerate(examples):
-            if ecols[i].button(e,key=f"ai_ex_{i}"): pending=e
+            if ecols[i].button(e,key=f"ai_ex_{i}",use_container_width=True): pending=e
         explain=st.checkbox("Also write a one-line answer (uses a 2nd request)",value=True,
                             help="Turn off to spend only one Gemini request per question — useful on the free tier.")
         with st.form("ai_form",clear_on_submit=True):
